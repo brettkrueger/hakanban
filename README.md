@@ -37,8 +37,21 @@ v1 ships the **Core + multi-line paste** scope:
 - **Labels** — colour + name per board. Rename, recolour, add or delete them from the toolbar's
   🏷 button or **✎ Edit labels** on a card; deleting a label removes it from every card.
   Colours come from the preset palette, the browser's colour picker, or a typed hex value.
+  In the card view, a card's own labels sit on their own row in the order the board shows
+  them: drag one (or focus it and press `←`/`→`) to reorder, ✕ or `Delete` to remove it, and
+  click a spare label underneath to add it at the end.
+- **Card references** — type `#12` in a card title, description, comment or checklist item
+  and it becomes a link to card #12 on the same board (hover for its title; struck through
+  once it's done). Numbers that don't match a card, code spans and URL fragments are left alone.
+- **Dependencies** — mark a card as **blocked by** other cards on the same board from the
+  card view's *Dependencies* section (or the new card dialog). Blocked cards get a red edge
+  and a ⛔ badge listing what they're waiting on; cards holding others up get a ⛓ badge with
+  the count, so you can see what to do first. A blocker stops counting once it's completed or
+  archived. The ⚑ filter can show only **ready** cards (open, nothing blocking them),
+  **blocked** cards, or cards **blocking** others. Cycles are refused.
 - **Filters** — the ⚑ bar filters by labels (match *any* or *all*), due date (overdue, due
-  within 24h, has / no due date), status (open / done), type (tasks / epics) and epic.
+  within 24h, has / no due date), status (open / done), type (tasks / epics), epic and
+  dependencies (ready / blocked / blocking).
   Combine with search; the ⚑ button shows how many filters are active.
 - **Epics** — switch any card's type to **Epic** to group cards under it. Epics show a
   progress bar (completed children / total) on the board; child cards show their epic's name.
@@ -164,9 +177,9 @@ List the column entities with `./scripts/ha states todo` and inspect one with
 
 | Service | Fields | Description |
 |---------|--------|-------------|
-| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?` | Create a card in a column. |
+| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?` | Create a card in a column. |
 | `hakanban.move_card` | `card_id`, `to_column`, `position?` | Move a card to another column (optionally at a position). |
-| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, archived, card_type, epic_id). |
+| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, archived, card_type, epic_id, blocked_by). |
 | `hakanban.add_comment` | `card_id`, `text` | Add a comment to a card. |
 | `hakanban.create_board` | `title` | Create a board. |
 | `hakanban.create_column` | `board_id`, `title` | Create a column on a board. |
@@ -184,8 +197,13 @@ Every mutation fires a Home Assistant event you can trigger automations on:
 | `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` (e.g. `auto_archived`) |
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
+| `hakanban_card_unblocked` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_deleted` | `board_id`, `card_id` |
 | `hakanban_board_changed` | `board_id`, `action` |
+
+`hakanban_card_unblocked` fires for an open card when its last open blocker is completed,
+archived, deleted or removed from its `blocked_by` — handy for "this is ready to start"
+notifications.
 
 ---
 
@@ -256,7 +274,7 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 - [ ] Checklists UI (the store already reserves `checklists`)
 - [ ] Attachments
 - [ ] Card / board templates
-- [ ] Swimlanes
+- [x] Swimlanes — group the board by type, epic, label or status
 - [x] Calendar — boards expose dated cards as a native HA `calendar` entity
 - [ ] In-panel timeline / calendar view
 - [ ] Custom fields

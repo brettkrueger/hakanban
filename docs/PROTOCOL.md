@@ -36,7 +36,8 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       "epic_id": null,                 // id of an epic card on the same board, or null
       "title": "Buy milk",
       "description": "",               // markdown
-      "labels": ["<label_id>", ...],
+      "labels": ["<label_id>", ...],   // ordered: the board shows them in this order
+      "blocked_by": ["<card_id>", ...], // cards on the same board that must be finished first
       "assignees": ["person.neil", ...],
       "due": null,                     // iso8601 or null
       "due_complete": false,           // deprecated: mirrors status == completed
@@ -57,7 +58,7 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
 ```
 
 Fields added after v0.1.8 (`card_type`, `epic_id`, `column_entered`, `auto_archive_days`,
-`done`) are back-filled on load, so older stores need no migration. A list without a `done`
+`done`, `blocked_by`) are back-filled on load, so older stores need no migration. A list without a `done`
 key gets `done: true` if its title is "Done" (case-insensitive); see *Done lists* for how
 existing cards are brought into line.
 
@@ -106,9 +107,9 @@ optimistic update and reconcile on the next push.
 | `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?`, `auto_archive_days?` (int ≥ 0; 0/null = off), `done?` (bool) | column |
 | `hakanban/delete_column` | `board_id`, `column_id` | `{deleted: column_id}` |
 | `hakanban/move_column` | `board_id`, `column_id`, `position` (int) | `{ok: true}` |
-| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?` | card |
+| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?` | card |
 | `hakanban/paste_cards` | `board_id`, `column_id`, `text` (newline-separated) **or** `titles[]` | `{cards:[…]}` |
-| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/status/cover/archived/card_type/epic_id` (`due`, `cover`, `epic_id` accept `null` to clear; legacy `due_complete` is an alias for `status`) | card |
+| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/status/cover/archived/card_type/epic_id/blocked_by` (`due`, `cover`, `epic_id`, `blocked_by` accept `null` to clear; legacy `due_complete` is an alias for `status`) | card |
 | `hakanban/move_card` | `card_id`, `to_column`, `position?` (int), `to_board?` | card |
 | `hakanban/delete_card` | `card_id` | `{deleted: card_id}` |
 | `hakanban/create_label` | `board_id`, `name`, `color` | label |
@@ -152,6 +153,33 @@ A card with `card_type: "epic"` groups other cards on the **same board** through
 Epic progress is derived in the frontend: children = cards whose `epic_id` is the epic,
 excluding archived cards that were never completed; done = `status == "completed"`.
 
+### Dependencies
+
+`blocked_by` lists cards that must be finished before this one. Rules enforced by
+`HakanbanData` (violations raise `HakanbanError` and change nothing):
+
+* Every id must be a card on the **same board**; a card can't depend on itself, and a link
+  that would close a cycle (directly or through other cards) is refused. Duplicates are
+  dropped, order is kept.
+* Deleting a card removes it from every `blocked_by`. Moving a card to another board clears
+  its own `blocked_by` and removes it from other cards'.
+* A card is **blocked** while any blocker is neither `completed` nor `archived`. This is
+  derived (the frontend computes it from the payload); nothing stops a blocked card from
+  being moved or completed.
+* `hakanban_card_unblocked` fires for each open, live card that was blocked before a
+  mutation and isn't after it (blocker completed, archived, deleted, removed from the list,
+  or its list flagged done).
+
+On load, `blocked_by` is back-filled to `[]` and ids that are missing, the card itself, or on
+another board are dropped.
+
+### Card references
+
+`#<number>` in a card's title, description, comments or checklist items is rendered by the
+frontend as a link to the card with that number on the same board. It's display-only: nothing
+is stored. Numbers without a matching card, `code` spans, links/URL fragments and HTML
+entities are left as text.
+
 ### Done lists
 
 A list with `done: true` completes the cards in it. On a board with at least one done list a
@@ -193,14 +221,15 @@ undo step. A sweep that archives cards is one undo step; an empty sweep changes 
 | `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` (`comment_added`, `auto_archived`) |
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
+| `hakanban_card_unblocked` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_deleted` | `board_id`, `card_id` |
 | `hakanban_board_changed` | `board_id`, `action` |
 
 ## Services (`hakanban.*`)
 
-`add_card` (board_id, column_id, title, description?, labels?, due?, card_type?, epic_id?),
-`move_card` (card_id, to_column, position?), `update_card` (card_id, title?, description?,
-labels?, due?, status?, archived?, card_type?, epic_id?), `add_comment` (card_id, text),
+`add_card` (board_id, column_id, title, description?, labels?, due?, card_type?, epic_id?,
+blocked_by?), `move_card` (card_id, to_column, position?), `update_card` (card_id, title?,
+description?, labels?, due?, status?, archived?, card_type?, epic_id?, blocked_by?), `add_comment` (card_id, text),
 `create_board` (title), `create_column` (board_id, title). Plus the native `todo.*` services on
 each column entity (Assist / voice).
 

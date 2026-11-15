@@ -196,6 +196,7 @@ def ws_move_column(hass, connection, msg, manager: HakanbanData):
         vol.Optional("due"): vol.Any(str, None),
         vol.Optional("card_type"): vol.In(CARD_TYPES),
         vol.Optional("epic_id"): vol.Any(str, None),
+        vol.Optional("blocked_by"): [str],
     }
 )
 @_guard
@@ -207,6 +208,7 @@ def ws_create_card(hass, connection, msg, manager: HakanbanData):
         due=msg.get("due"),
         card_type=msg.get("card_type"),
         epic_id=msg.get("epic_id"),
+        blocked_by=msg.get("blocked_by"),
     )
 
 
@@ -241,6 +243,7 @@ def ws_paste_cards(hass, connection, msg, manager: HakanbanData):
         vol.Optional("archived"): bool,
         vol.Optional("card_type"): vol.In(CARD_TYPES),
         vol.Optional("epic_id"): vol.Any(str, None),
+        vol.Optional("blocked_by"): vol.Any([str], None),
     }
 )
 @_guard

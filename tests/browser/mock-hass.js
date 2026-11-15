@@ -32,6 +32,7 @@ function makeSeed() {
     number: ++n,
     card_type: extra.card_type || "task",
     epic_id: extra.epic_id || null,
+    blocked_by: extra.blocked_by || [],
     title,
     description: extra.description || "",
     labels: extra.labels || [],
@@ -164,12 +165,13 @@ const handlers = {
     b.columns.forEach((c, i) => (c.order = i * 1000));
     return { ok: true };
   },
-  create_card: ({ board_id, column_id, title, description, labels, due, card_type, epic_id }) => {
+  create_card: ({ board_id, column_id, title, description, labels, due, card_type, epic_id, blocked_by }) => {
     const b = findBoard(board_id);
     const col = b.columns.find((c) => c.id === column_id);
     const card = {
       id: uid(), board_id, column_id, order: col.cards.length * 1000,
       number: allCards().length + 1, card_type: card_type || "task", epic_id: epic_id || null,
+      blocked_by: blocked_by || [],
       title, description: description || "",
       labels: labels || [], assignees: [], due: due || null, due_complete: false,
       status: "needs_action", checklists: [], comments: [], cover: null, archived: false,
@@ -184,6 +186,7 @@ const handlers = {
   },
   update_card: ({ card_id, status, due_complete, ...fields }) => {
     const [board, col, card] = findCard(card_id);
+    if ("blocked_by" in fields) fields.blocked_by = [...new Set(fields.blocked_by || [])];
     Object.assign(card, fields);
     if (status !== undefined) {
       const dc = doneCols(board);
@@ -218,6 +221,7 @@ const handlers = {
   delete_card: ({ card_id }) => {
     const [, col] = findCard(card_id);
     col.cards = col.cards.filter((c) => c.id !== card_id);
+    allCards().forEach(([, , c]) => { c.blocked_by = (c.blocked_by || []).filter((id) => id !== card_id); });
     return { deleted: card_id };
   },
   create_label: ({ board_id, name, color }) => {

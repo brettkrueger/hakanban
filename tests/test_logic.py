@@ -468,6 +468,78 @@ def run():
           mig.cards["y"]["column_id"] == "d" and mig.cards["y"]["completed"] == "2026-05-02T10:00:00+00:00"
           and mig.cards["y"]["order"] > mig.cards["x"]["order"])
 
+    # ---- dependencies (blocked_by)
+    ph = FakeHass()
+    pm = data.HakanbanData(ph, FakeStore())
+    pb = pm.create_board("Deps", seed=True)
+    pbid = pb["id"]
+    p_todo, p_doing, p_done = (c["id"] for c in pb["columns"])
+    a = pm.create_card(pbid, p_todo, "A")
+    b = pm.create_card(pbid, p_todo, "B")
+    c3 = pm.create_card(pbid, p_todo, "C", blocked_by=[a["id"], a["id"]])
+    check("new card defaults to no blockers", a["blocked_by"] == [])
+    check("create with blocked_by (de-duplicated)", c3["blocked_by"] == [a["id"]])
+    check("card with open blocker is blocked", pm._is_blocked(c3))
+    pm.update_card(b["id"], blocked_by=[a["id"]])
+    check("update sets blocked_by", b["blocked_by"] == [a["id"]])
+    check("self-dependency rejected", raises(lambda: pm.update_card(a["id"], blocked_by=[a["id"]])))
+    check("direct cycle rejected", raises(lambda: pm.update_card(a["id"], blocked_by=[b["id"]])))
+    pm.update_card(c3["id"], blocked_by=[a["id"], b["id"]])
+    check("transitive cycle rejected (A after C, C after B after A)",
+          raises(lambda: pm.update_card(a["id"], blocked_by=[c3["id"]])))
+    check("unknown blocker rejected", raises(lambda: pm.update_card(a["id"], blocked_by=["nope"])))
+    other_b = pm.create_board("Other deps", seed=True)
+    far = pm.create_card(other_b["id"], other_b["columns"][0]["id"], "Far")
+    check("cross-board blocker rejected", raises(lambda: pm.update_card(a["id"], blocked_by=[far["id"]])))
+    check("failed update leaves blockers alone", a["blocked_by"] == [])
+
+    unblocked = lambda: [e[1]["card_id"] for e in ph.bus.events if e[0] == "hakanban_card_unblocked"]
+    pm.move_card(a["id"], p_done)
+    check("completing A unblocks B only (C still waits on B)", unblocked() == [b["id"]])
+    check("C still blocked", pm._is_blocked(c3) and not pm._is_blocked(b))
+    pm.update_card(b["id"], status="completed")
+    check("completing B unblocks C", unblocked() == [b["id"], c3["id"]])
+    pm.move_card(a["id"], p_todo)
+    check("reopening a blocker re-blocks", pm._is_blocked(c3) and pm._is_blocked(b) is True)
+    pm.update_card(a["id"], archived=True)
+    check("archived open blocker doesn't block", not pm._is_blocked(b))
+    pm.update_card(a["id"], archived=False)
+    pm.update_card(c3["id"], blocked_by=None)
+    check("blocked_by null clears", c3["blocked_by"] == [])
+    pm.update_card(c3["id"], blocked_by=[a["id"]])
+    n_un = len(unblocked())
+    pm.delete_card(a["id"])
+    check("deleting a blocker removes it everywhere",
+          b["blocked_by"] == [] and c3["blocked_by"] == [])
+    check("deleting the last open blocker fires unblocked", len(unblocked()) == n_un + 1)
+    pm.undo()
+    check("undo restores the deleted blocker's links",
+          pm.cards[c3["id"]]["blocked_by"] == [a["id"]])
+    c3 = pm.cards[c3["id"]]
+    d4 = pm.create_card(pbid, p_todo, "D", blocked_by=[c3["id"]])
+    pm.move_card(c3["id"], other_b["columns"][0]["id"], to_board=other_b["id"])
+    moved = pm.cards[c3["id"]]
+    check("moving to another board clears both directions",
+          moved["blocked_by"] == [] and pm.cards[d4["id"]]["blocked_by"] == [])
+
+    # Migration: missing field back-filled; dangling / cross-board / self refs dropped.
+    dep = data.HakanbanData(FakeHass(), FakeStore())
+    dep._data = {
+        "boards": {
+            "b": {"id": "b", "title": "M", "card_seq": 2, "label_defs": [], "columns": [{"id": "o", "title": "To Do", "order": 0}]},
+            "b2": {"id": "b2", "title": "N", "card_seq": 1, "label_defs": [], "columns": [{"id": "o2", "title": "To Do", "order": 0}]},
+        },
+        "cards": {
+            "x": {"id": "x", "board_id": "b", "column_id": "o", "order": 0, "number": 1, "title": "Old", "status": "needs_action"},
+            "y": {"id": "y", "board_id": "b", "column_id": "o", "order": 1000, "number": 2, "title": "Refs",
+                  "status": "needs_action", "blocked_by": ["x", "x", "gone", "y", "z"]},
+            "z": {"id": "z", "board_id": "b2", "column_id": "o2", "order": 0, "number": 1, "title": "Far", "status": "needs_action"},
+        },
+    }
+    dep._normalize()
+    check("migration: blocked_by back-filled", dep.cards["x"]["blocked_by"] == [])
+    check("migration: bad blocker refs dropped", dep.cards["y"]["blocked_by"] == ["x"])
+
     failed = [n for n, ok in RESULTS if not ok]
     print()
     print(f"{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

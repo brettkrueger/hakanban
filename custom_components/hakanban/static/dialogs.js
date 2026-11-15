@@ -273,6 +273,7 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
     cardType,
     epicId,
     labels: new Set(labels),
+    blockedBy: [],
     another: false,
   };
   const dirty = () =>
@@ -287,6 +288,22 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
       .map((l) => `<span class="hk-label-chip ${state.labels.has(l.id) ? "selected" : ""}" data-nc-label="${l.id}"
           style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`)
       .join("") || `<span class="hk-muted">No labels on this board yet.</span>`;
+
+  // "Blocked by": chosen blockers as removable chips plus a picker of open cards.
+  const blockersHtml = (board) => {
+    const byId = Object.fromEntries(boardCards(board).map((c) => [c.id, c]));
+    state.blockedBy = state.blockedBy.filter((id) => byId[id]);
+    const chips = state.blockedBy
+      .map((id) => byId[id])
+      .map((c) => `<span class="hk-dep-chip">#${c.number} ${escapeHtml(c.title)}<button class="hk-chip-x" data-nc-unblock="${c.id}" title="Remove" aria-label="Remove">✕</button></span>`)
+      .join("");
+    const opts = Object.values(byId)
+      .filter((c) => !c.archived && c.status !== "completed" && !state.blockedBy.includes(c.id))
+      .sort((a, z) => a.number - z.number)
+      .map((c) => `<option value="${c.id}">#${c.number} ${escapeHtml(c.title)}</option>`)
+      .join("");
+    return `${chips}${opts ? `<select id="hk-nc-block" class="hk-dep-select"><option value="">+ Waiting on another card…</option>${opts}</select>` : chips ? "" : `<span class="hk-muted">No open cards to depend on.</span>`}`;
+  };
 
   const epicOptions = (board) => {
     const epics = boardEpics(board);
@@ -332,6 +349,10 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
       <div class="hk-section">
         <h3>Due date</h3>
         <div class="hk-row"><input type="datetime-local" id="hk-nc-due"></div>
+      </div>
+      <div class="hk-section">
+        <h3>Blocked by</h3>
+        <div class="hk-row hk-wrap" id="hk-nc-deps">${blockersHtml(board)}</div>
       </div>
       <div class="hk-section">
         <h3>Description</h3>
@@ -381,6 +402,7 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
     const due = root.getElementById("hk-nc-due").value;
     if (due) extra.due = due + ":00";
     if (state.cardType !== "epic" && state.epicId) extra.epic_id = state.epicId;
+    if (state.blockedBy.length) extra.blocked_by = [...state.blockedBy];
     const checks = root.getElementById("hk-nc-checks").value.split("\n").map((l) => l.trim()).filter(Boolean);
 
     busy = true;
@@ -428,6 +450,23 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
         chip.classList.toggle("selected", state.labels.has(id));
       })
     );
+    const deps = root.getElementById("hk-nc-deps");
+    const wireDeps = () => {
+      deps.querySelector("#hk-nc-block")?.addEventListener("change", (e) => {
+        if (!e.target.value) return;
+        state.blockedBy.push(e.target.value);
+        deps.innerHTML = blockersHtml(getBoard());
+        wireDeps();
+      });
+      deps.querySelectorAll("[data-nc-unblock]").forEach((b) =>
+        b.addEventListener("click", () => {
+          state.blockedBy = state.blockedBy.filter((id) => id !== b.dataset.ncUnblock);
+          deps.innerHTML = blockersHtml(getBoard());
+          wireDeps();
+        })
+      );
+    };
+    wireDeps();
     root.getElementById("hk-nc-another").addEventListener("change", (e) => (state.another = e.target.checked));
     const titleEl = root.getElementById("hk-nc-title");
     titleEl.addEventListener("input", () => titleEl.classList.remove("invalid"));

@@ -35,6 +35,7 @@ from .const import (
     EVENT_CARD_CREATED,
     EVENT_CARD_DELETED,
     EVENT_CARD_MOVED,
+    EVENT_CARD_UNBLOCKED,
     EVENT_CARD_UPDATED,
     ORDER_STEP,
     SIGNAL_BOARDS_UPDATED,
@@ -203,6 +204,14 @@ class HakanbanData:
             card.setdefault("card_type", CARD_TYPE_TASK)
             card.setdefault("epic_id", None)
             card.setdefault("column_entered", card.get("updated") or card.get("created") or _now())
+            card.setdefault("blocked_by", [])
+        # Drop dependencies on cards that no longer exist or live on another board.
+        for card in self.cards.values():
+            card["blocked_by"] = [
+                bid for bid in dict.fromkeys(card["blocked_by"])
+                if bid != card["id"] and bid in self.cards
+                and self.cards[bid]["board_id"] == card["board_id"]
+            ]
         # Status now follows the list on boards that have a done list. Cards already sitting
         # in one are completed (stamped with when they entered it); cards completed elsewhere
         # (e.g. ticked in an HA to-do list) are moved into the done list rather than reopened.
@@ -477,9 +486,11 @@ class HakanbanData:
             # Apply the new rule straight away, inside this same undo step.
             self._archive_cards(self._auto_archive_candidates(column_ids={column_id}))
         if "done" in changes and changes["done"] is not None:
+            blocked_before = self._blocked_ids(board_id)
             column["done"] = bool(changes["done"])
             # Completes / reopens cards to match, inside this same undo step.
             self._sync_board_completion(board)
+            self._fire_unblocked(blocked_before)
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "column_updated"})
         return column
 
@@ -536,6 +547,71 @@ class HakanbanData:
         children.sort(key=lambda c: c.get("number", 0))
         return children
 
+    # ---------------------------------------------------------- dependencies
+    # ``blocked_by`` lists cards (same board) that must be finished first. A card is
+    # blocked while any of them is neither completed nor archived.
+    def _is_blocked(self, card: dict[str, Any]) -> bool:
+        for bid in card.get("blocked_by", []):
+            blocker = self.cards.get(bid)
+            if blocker and blocker.get("status") != STATUS_COMPLETED and not blocker.get("archived"):
+                return True
+        return False
+
+    def _blocked_ids(self, board_id: str) -> set[str]:
+        return {c["id"] for c in self.cards_in_board(board_id) if self._is_blocked(c)}
+
+    def _fire_unblocked(self, before: set[str]) -> None:
+        """Fire EVENT_CARD_UNBLOCKED for open cards in ``before`` that are no longer blocked."""
+        for card_id in before:
+            card = self.cards.get(card_id)
+            if (card is None or card.get("archived") or card.get("status") == STATUS_COMPLETED
+                    or self._is_blocked(card)):
+                continue
+            self.hass.bus.async_fire(
+                EVENT_CARD_UNBLOCKED,
+                {"board_id": card["board_id"], "column_id": card["column_id"], "card_id": card_id},
+            )
+
+    def _depends_on(self, card_id: str, target_id: str) -> bool:
+        """True if ``card_id`` is (transitively) blocked by ``target_id``."""
+        seen: set[str] = set()
+        stack = [card_id]
+        while stack:
+            cur = self.cards.get(stack.pop())
+            if cur is None:
+                continue
+            for bid in cur.get("blocked_by", []):
+                if bid == target_id:
+                    return True
+                if bid not in seen:
+                    seen.add(bid)
+                    stack.append(bid)
+        return False
+
+    def _validate_blockers(self, card_id: str | None, board_id: str, blocked_by: Any) -> list[str]:
+        """Return a clean, de-duplicated ``blocked_by`` list or raise HakanbanError."""
+        out = list(dict.fromkeys(blocked_by or []))
+        for bid in out:
+            blocker = self.cards.get(bid)
+            if blocker is None:
+                raise HakanbanError(f"Unknown card {bid}")
+            if blocker["board_id"] != board_id:
+                raise HakanbanError("A card can only depend on cards from its own board")
+            if card_id is not None:
+                if bid == card_id:
+                    raise HakanbanError("A card cannot depend on itself")
+                if self._depends_on(bid, card_id):
+                    raise HakanbanError(
+                        f"#{blocker.get('number')} already depends on this card; that would be a cycle"
+                    )
+        return out
+
+    def _drop_dependency_on(self, card_id: str) -> None:
+        """Remove ``card_id`` from every other card's ``blocked_by``."""
+        for card in self.cards.values():
+            if card_id in card.get("blocked_by", []):
+                card["blocked_by"] = [b for b in card["blocked_by"] if b != card_id]
+
     def _new_card(self, board: dict[str, Any], column_id: str, title: str, **fields: Any) -> dict[str, Any]:
         card_type = fields.get("card_type") or CARD_TYPE_TASK
         if card_type not in CARD_TYPES:
@@ -544,6 +620,7 @@ class HakanbanData:
         if card_type == CARD_TYPE_EPIC and epic_id:
             raise HakanbanError("Epics cannot be nested inside other epics")
         self._validate_epic_link(None, board["id"], epic_id)
+        blocked_by = self._validate_blockers(None, board["id"], fields.get("blocked_by"))
 
         board["card_seq"] = board.get("card_seq", 0) + 1
         existing = self.cards_in_column(column_id)
@@ -561,6 +638,7 @@ class HakanbanData:
             "title": title.strip() or "Untitled",
             "description": fields.get("description", ""),
             "labels": list(fields.get("labels", [])),
+            "blocked_by": blocked_by,
             "assignees": list(fields.get("assignees", [])),
             "due": fields.get("due"),
             "due_complete": False,
@@ -616,6 +694,7 @@ class HakanbanData:
     def update_card(self, card_id: str, **fields: Any) -> dict[str, Any]:
         card = self._require_card(card_id)
         was_archived = bool(card.get("archived"))
+        blocked_before = self._blocked_ids(card["board_id"])
         if fields.get("status") is not None:
             if fields["status"] not in (STATUS_COMPLETED, STATUS_NEEDS_ACTION):
                 raise HakanbanError(f"Unknown status {fields['status']}")
@@ -636,6 +715,8 @@ class HakanbanData:
             new_epic = None
         if new_epic is not None:
             self._validate_epic_link({**card, "card_type": new_type}, card["board_id"], new_epic)
+        if "blocked_by" in fields:
+            card["blocked_by"] = self._validate_blockers(card_id, card["board_id"], fields["blocked_by"])
         if card.get("card_type", CARD_TYPE_TASK) == CARD_TYPE_EPIC and new_type != CARD_TYPE_EPIC:
             self._unlink_epic_children(card_id)  # demoted: its children become free cards
         card["card_type"] = new_type
@@ -675,6 +756,7 @@ class HakanbanData:
         else:
             completed = want_done if want_done is not None else card.get("status") == STATUS_COMPLETED
         newly = self._set_completion(card, completed)
+        self._fire_unblocked(blocked_before)
         event = EVENT_CARD_COMPLETED if newly else EVENT_CARD_UPDATED
         self._commit(
             card["board_id"], event,
@@ -695,12 +777,15 @@ class HakanbanData:
         board_id = to_board or card["board_id"]
         board = self._require_board(board_id)
         self._column(board, to_column)  # validate target exists
+        blocked_before = self._blocked_ids(card["board_id"])
 
         if board_id != card["board_id"]:
-            # Epic links never cross boards.
+            # Epic links and dependencies never cross boards.
             card["epic_id"] = None
             if card.get("card_type") == CARD_TYPE_EPIC:
                 self._unlink_epic_children(card_id)
+            card["blocked_by"] = []
+            self._drop_dependency_on(card_id)
         card["board_id"] = board_id
         self._place_card(card, to_column, position)
         if self._done_columns(board) and self._set_completion(card, self._column_is_done(board, to_column)):
@@ -708,6 +793,7 @@ class HakanbanData:
                 EVENT_CARD_COMPLETED,
                 {"board_id": board_id, "column_id": to_column, "card_id": card_id},
             )
+        self._fire_unblocked(blocked_before)
 
         self._commit(
             board_id, EVENT_CARD_MOVED,
@@ -739,8 +825,11 @@ class HakanbanData:
     def delete_card(self, card_id: str) -> None:
         card = self._require_card(card_id)
         board_id = card["board_id"]
+        blocked_before = self._blocked_ids(board_id)
         self._unlink_epic_children(card_id)
+        self._drop_dependency_on(card_id)
         del self.cards[card_id]
+        self._fire_unblocked(blocked_before)
         self._commit(
             board_id, EVENT_CARD_DELETED,
             {"board_id": board_id, "card_id": card_id},

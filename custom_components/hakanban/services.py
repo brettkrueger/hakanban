@@ -27,6 +27,7 @@ ADD_CARD_SCHEMA = vol.Schema(
         vol.Optional("due"): cv.string,
         vol.Optional("card_type"): vol.In(CARD_TYPES),
         vol.Optional("epic_id"): cv.string,
+        vol.Optional("blocked_by"): vol.All(cv.ensure_list, [cv.string]),
     }
 )
 
@@ -50,6 +51,7 @@ UPDATE_CARD_SCHEMA = vol.Schema(
         vol.Optional("archived"): cv.boolean,
         vol.Optional("card_type"): vol.In(CARD_TYPES),
         vol.Optional("epic_id"): vol.Any(cv.string, None),
+        vol.Optional("blocked_by"): vol.Any(None, vol.All(cv.ensure_list, [cv.string])),
     }
 )
 
@@ -81,6 +83,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 due=call.data.get("due"),
                 card_type=call.data.get("card_type"),
                 epic_id=call.data.get("epic_id"),
+                blocked_by=call.data.get("blocked_by"),
             )
         except HakanbanError as err:
             raise vol.Invalid(str(err)) from err

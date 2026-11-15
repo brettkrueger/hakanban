@@ -241,6 +241,11 @@ export class HakanbanPanel extends HTMLElement {
           </select></span>
         <span class="hk-fgroup"><strong>Status</strong>${seg("status", [["", "All"], ["open", "Open"], ["completed", "Done"]])}</span>
         <span class="hk-fgroup"><strong>Type</strong>${seg("type", [["", "All"], ["task", "Tasks"], ["epic", "Epics"]])}</span>
+        <span class="hk-fgroup"><strong>Dependencies</strong>
+          <select data-fsel="deps">
+            ${[["", "Any"], ["ready", "Ready (nothing blocking)"], ["blocked", "Blocked"], ["blocking", "Blocking other cards"]]
+              .map(([v, t]) => `<option value="${v}" ${f.deps === v ? "selected" : ""}>${t}</option>`).join("")}
+          </select></span>
         <span class="hk-fgroup"><strong>Epic</strong>
           <select data-fsel="epic">
             <option value="">Any</option>

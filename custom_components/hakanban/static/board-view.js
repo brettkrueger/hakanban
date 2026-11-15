@@ -16,6 +16,9 @@ import {
   epicProgress,
   swimlanes,
   swimlaneChanges,
+  renderRefs,
+  openBlockers,
+  dependents,
 } from "./util.js";
 
 // Module-level drag state (HTML5 DnD can't read dataTransfer during dragover).
@@ -84,7 +87,7 @@ export class HakanbanBoard extends HTMLElement {
   }
 
   _cardVisible(card) {
-    return cardMatchesFilter(card, this._filter);
+    return cardMatchesFilter(card, this._filter, this._byId);
   }
 
   _cardHtml(card, labelById, cardById) {
@@ -104,6 +107,18 @@ export class HakanbanBoard extends HTMLElement {
       badges.push(`<span class="hk-badge hk-done-badge" title="Completed ${escapeHtml(formatTimestamp(card.completed))}">✓ ${escapeHtml(formatDue(card.completed))}</span>`);
     if (card.due)
       badges.push(`<span class="hk-badge due-${ds}">🕑 ${escapeHtml(formatDue(card.due))}</span>`);
+    // Dependencies: what this card is waiting on, and how much open work waits on it.
+    const blockers = done ? [] : openBlockers(card, cardById);
+    if (blockers.length) {
+      const nums = blockers.slice(0, 3).map((x) => `#${x.number}`).join(", ") + (blockers.length > 3 ? "…" : "");
+      const tip = "Blocked by " + blockers.map((x) => `#${x.number} ${x.title}`).join(", ");
+      badges.push(`<span class="hk-badge hk-blocked-badge" title="${escapeHtml(tip)}">⛔ ${nums}</span>`);
+    }
+    const waiting = done ? [] : dependents(card, cardById).filter((x) => x.status !== "completed");
+    if (waiting.length) {
+      const tip = "Blocks " + waiting.map((x) => `#${x.number} ${x.title}`).join(", ");
+      badges.push(`<span class="hk-badge hk-blocking-badge" title="${escapeHtml(tip)}">⛓ ${waiting.length}</span>`);
+    }
     if (card.description) badges.push(`<span class="hk-badge">≡</span>`);
     if ((card.comments || []).length) badges.push(`<span class="hk-badge">💬 ${card.comments.length}</span>`);
     const checks = (card.checklists || []).reduce(
@@ -128,10 +143,10 @@ export class HakanbanBoard extends HTMLElement {
 
     const completed = card.status === "completed" ? "completed" : "";
     return `
-      <div class="hk-card ${completed} ${isEpic ? "epic" : ""}" draggable="true" data-card="${card.id}" data-col="${card.column_id}">
+      <div class="hk-card ${completed} ${isEpic ? "epic" : ""} ${blockers.length ? "blocked" : ""}" draggable="true" data-card="${card.id}" data-col="${card.column_id}">
         ${epicTop}
         ${labels ? `<div class="hk-card-labels">${labels}</div>` : ""}
-        <div class="hk-card-title">${escapeHtml(card.title)}</div>
+        <div class="hk-card-title">${renderRefs(card.title, this._board)}</div>
         <div class="hk-card-badges">${badges.join("")}</div>
         ${epicBottom}
       </div>`;
@@ -219,6 +234,7 @@ export class HakanbanBoard extends HTMLElement {
     const b = this._board;
     const labelById = Object.fromEntries((b.labels || []).map((l) => [l.id, l]));
     const cardById = Object.fromEntries(boardCards(b).map((c) => [c.id, c]));
+    this._byId = cardById;
     const lanes = swimlanes(b, this._lanes);
     const addCol = this._addCol.open
       ? `<div class="hk-add-col"><div class="hk-composer"><textarea data-addcol placeholder="List title…"></textarea>
@@ -262,9 +278,11 @@ export class HakanbanBoard extends HTMLElement {
 
     // --- card click -> open modal (suppress if a drag just happened) ---
     root.querySelectorAll(".hk-card").forEach((el) => {
-      el.addEventListener("click", () => {
+      el.addEventListener("click", (e) => {
         if (this._justDragged) return;
-        this._openCard(el.dataset.card);
+        // A "#12" reference in the title opens that card instead.
+        const ref = e.target.closest("[data-ref]");
+        this._openCard(ref ? ref.dataset.ref : el.dataset.card);
       });
       el.addEventListener("dragstart", (e) => {
         DRAG = {

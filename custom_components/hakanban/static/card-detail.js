@@ -13,6 +13,11 @@ import {
   boardEpics,
   epicChildren,
   epicProgress,
+  renderRefs,
+  cardIndex,
+  openBlockers,
+  dependents,
+  dependsOn,
 } from "./util.js";
 
 export class HakanbanCardDetail extends HTMLElement {
@@ -50,14 +55,48 @@ export class HakanbanCardDetail extends HTMLElement {
     if (!c) return;
     const labelById = Object.fromEntries((b.labels || []).map((l) => [l.id, l]));
     const selected = new Set(c.labels || []);
+    const byId = cardIndex(b);
 
-    const labelsHtml = (b.labels || [])
-      .map((l) => {
-        const text = contrastText(l.color);
-        const sel = selected.has(l.id) ? "selected" : "";
-        return `<span class="hk-label-chip ${sel}" data-label="${l.id}" style="background:${l.color};color:${text}">${escapeHtml(l.name || "·")}</span>`;
-      })
+    // The card's own labels, in its order (drag or ←/→ to reorder), then the rest to add.
+    const onCard = (c.labels || []).map((id) => labelById[id]).filter(Boolean);
+    const cardLabelsHtml = onCard
+      .map((l) => `<span class="hk-label-chip selected hk-sortable" draggable="true" tabindex="0" data-card-label="${l.id}"
+          title="Drag (or focus and press ←/→) to reorder · Delete to remove"
+          style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}<button class="hk-chip-x" data-label-remove="${l.id}" title="Remove label" aria-label="Remove label">✕</button></span>`)
       .join("");
+    const labelsHtml = (b.labels || [])
+      .filter((l) => !selected.has(l.id))
+      .map((l) => `<span class="hk-label-chip" data-label="${l.id}" title="Add label" style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`)
+      .join("");
+
+    // Dependencies
+    const depRow = (x, removeAttr) => `<div class="hk-epic-child ${x.status === "completed" ? "done" : ""}" data-open-card="${x.id}">
+        <span class="num">#${x.number}</span><span class="ttl">${escapeHtml(x.title)}</span>
+        <span class="col">${x.archived ? "archived" : x.status === "completed" ? "✓ done" : escapeHtml((b.columns.find((col) => col.id === x.column_id) || {}).title || "")}</span>
+        <button class="hk-btn secondary" ${removeAttr}="${x.id}" title="Remove dependency">✕</button>
+      </div>`;
+    const blockerCards = (c.blocked_by || []).map((id) => byId[id]).filter(Boolean).sort((x, z) => x.number - z.number);
+    const waitingCards = dependents(c, byId);
+    const stillOpen = c.status === "completed" ? [] : openBlockers(c, byId);
+    const candidates = Object.values(byId)
+      .filter((x) => !x.archived && x.status !== "completed" && x.id !== c.id)
+      .sort((x, z) => x.number - z.number);
+    const blockerOpts = candidates
+      .filter((x) => !(c.blocked_by || []).includes(x.id) && !dependsOn(x, c, byId))
+      .map((x) => `<option value="${x.id}">#${x.number} ${escapeHtml(x.title)}</option>`).join("");
+    const waitingOpts = candidates
+      .filter((x) => !(x.blocked_by || []).includes(c.id) && !dependsOn(c, x, byId))
+      .map((x) => `<option value="${x.id}">#${x.number} ${escapeHtml(x.title)}</option>`).join("");
+    const depsHtml = `
+          <div class="hk-section">
+            <h3>Dependencies</h3>
+            <div class="hk-dep-head">Blocked by${stillOpen.length ? ` <span class="hk-dep-state">⛔ waiting on ${stillOpen.length}</span>` : blockerCards.length ? ` <span class="hk-dep-state ok">✓ ready</span>` : ""}</div>
+            ${blockerCards.map((x) => depRow(x, "data-dep-remove")).join("")}
+            ${blockerOpts ? `<div class="hk-row"><select id="hk-dep-add" class="hk-dep-select"><option value="">+ Add a card this is waiting on…</option>${blockerOpts}</select></div>` : ""}
+            <div class="hk-dep-head">Blocks</div>
+            ${waitingCards.map((x) => depRow(x, "data-dep-unblock")).join("")}
+            ${waitingOpts ? `<div class="hk-row"><select id="hk-dep-block" class="hk-dep-select"><option value="">+ Add a card waiting on this…</option>${waitingOpts}</select></div>` : ""}
+          </div>`;
 
     const checklistsHtml = (c.checklists || [])
       .map((cl) => {
@@ -66,7 +105,7 @@ export class HakanbanCardDetail extends HTMLElement {
         const items = cl.items
           .map(
             (i) =>
-              `<label class="hk-check-item ${i.done ? "done" : ""}"><input type="checkbox" data-check="${cl.id}:${i.id}" ${i.done ? "checked" : ""}><span>${escapeHtml(i.text)}</span></label>`
+              `<label class="hk-check-item ${i.done ? "done" : ""}"><input type="checkbox" data-check="${cl.id}:${i.id}" ${i.done ? "checked" : ""}><span>${renderRefs(i.text, b)}</span></label>`
           )
           .join("");
         return `<div class="hk-section"><h3>${escapeHtml(cl.title)} (${done}/${total})</h3>${items}
@@ -79,7 +118,7 @@ export class HakanbanCardDetail extends HTMLElement {
       .reverse()
       .map(
         (cm) =>
-          `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div>${escapeHtml(cm.text)}</div></div>`
+          `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div>${renderRefs(cm.text, b)}</div></div>`
       )
       .join("");
 
@@ -147,6 +186,10 @@ export class HakanbanCardDetail extends HTMLElement {
             c.status === "completed" && c.completed
               ? ` · <span class="hk-completed-at">✓ Completed ${escapeHtml(formatTimestamp(c.completed))}</span>`
               : ""
+          }${
+            stillOpen.length
+              ? ` · <span class="hk-blocked-at" title="Waiting on ${escapeHtml(stillOpen.map((x) => `#${x.number} ${x.title}`).join(", "))}">⛔ Blocked by ${stillOpen.map((x) => `#${x.number}`).join(", ")}</span>`
+              : ""
           }</div>
 
           <div class="hk-section">
@@ -159,9 +202,12 @@ export class HakanbanCardDetail extends HTMLElement {
 
           ${epicHtml}
 
+          ${depsHtml}
+
           <div class="hk-section">
-            <h3>Labels</h3>
-            <div class="hk-label-row">${labelsHtml}
+            <h3>Labels${onCard.length > 1 ? ` <span class="hk-muted hk-hint">drag to reorder</span>` : ""}</h3>
+            ${onCard.length ? `<div class="hk-label-row" id="hk-card-labels">${cardLabelsHtml}</div>` : ""}
+            <div class="hk-label-row hk-label-add">${labelsHtml}
               <span class="hk-label-chip" id="hk-manage-labels" style="background:var(--hk-divider);color:var(--hk-text)">✎ Edit labels</span>
             </div>
           </div>
@@ -180,7 +226,7 @@ export class HakanbanCardDetail extends HTMLElement {
               this._editingDesc
                 ? `<textarea class="hk-desc-edit" id="hk-desc">${escapeHtml(c.description || "")}</textarea>
                    <div class="hk-row" style="margin-top:6px"><button class="hk-btn" id="hk-desc-save">Save</button><button class="hk-btn secondary" id="hk-desc-cancel">Cancel</button></div>`
-                : `<div class="hk-desc-render" id="hk-desc-render">${renderMarkdown(c.description) || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>`
+                : `<div class="hk-desc-render" id="hk-desc-render">${renderMarkdown(c.description, b) || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>`
             }
           </div>
 
@@ -203,6 +249,10 @@ export class HakanbanCardDetail extends HTMLElement {
       </div>`;
 
     this._wire();
+    if (this._focusLabel) {
+      this.shadowRoot.querySelector(`[data-card-label="${this._focusLabel}"]`)?.focus();
+      this._focusLabel = null;
+    }
   }
 
   _wire() {
@@ -226,14 +276,109 @@ export class HakanbanCardDetail extends HTMLElement {
       if (e.key === "Enter") { e.preventDefault(); titleEl.blur(); }
     });
 
-    root.querySelectorAll(".hk-label-chip[data-label]").forEach((chip) => {
-      chip.addEventListener("click", () => {
-        const id = chip.dataset.label;
-        const labels = new Set(c.labels || []);
-        labels.has(id) ? labels.delete(id) : labels.add(id);
-        api.updateCard(c.id, { labels: [...labels] });
-      });
+    // "#12" references (description, comments, checklist items) open that card.
+    root.querySelectorAll("[data-ref]").forEach((el) => {
+      const go = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this._onOpenCard) this._onOpenCard(el.dataset.ref);
+      };
+      el.addEventListener("click", go);
+      el.addEventListener("keydown", (e) => { if (e.key === "Enter") go(e); });
     });
+
+    // Labels: click a spare label to add it (at the end), ✕ / Delete to remove one,
+    // drag or ←/→ to reorder the card's own labels.
+    const current = () => (c.labels || []).filter((id) => (this._board.labels || []).some((l) => l.id === id));
+    const setLabels = (labels) => {
+      if (labels.join() !== (c.labels || []).join()) api.updateCard(c.id, { labels });
+    };
+    root.querySelectorAll(".hk-label-chip[data-label]").forEach((chip) =>
+      chip.addEventListener("click", () => setLabels([...current(), chip.dataset.label]))
+    );
+    root.querySelectorAll("[data-label-remove]").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setLabels(current().filter((id) => id !== btn.dataset.labelRemove));
+      })
+    );
+    const labelRow = $("#hk-card-labels");
+    if (labelRow) {
+      let dragEl = null;
+      let dropped = false;
+      const chips = () => [...labelRow.querySelectorAll("[data-card-label]")];
+      labelRow.querySelectorAll("[data-card-label]").forEach((chip) => {
+        chip.addEventListener("dragstart", (e) => {
+          dragEl = chip;
+          dropped = false;
+          chip.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", chip.dataset.cardLabel);
+        });
+        chip.addEventListener("dragend", () => {
+          chip.classList.remove("dragging");
+          dragEl = null;
+          // Cancelled (Esc / dropped elsewhere): undo the live preview.
+          if (dropped) setLabels(chips().map((x) => x.dataset.cardLabel));
+          else this.render();
+        });
+        chip.addEventListener("keydown", (e) => {
+          const ids = current();
+          const i = ids.indexOf(chip.dataset.cardLabel);
+          if (i < 0) return;
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            const j = i + (e.key === "ArrowLeft" ? -1 : 1);
+            if (j < 0 || j >= ids.length) return;
+            e.preventDefault();
+            [ids[i], ids[j]] = [ids[j], ids[i]];
+            this._focusLabel = chip.dataset.cardLabel;
+            setLabels(ids);
+          } else if (e.key === "Delete" || e.key === "Backspace") {
+            e.preventDefault();
+            setLabels(ids.filter((id) => id !== chip.dataset.cardLabel));
+          }
+        });
+      });
+      // Live preview: move the dragged chip as the pointer passes the others (chips wrap).
+      labelRow.addEventListener("dragover", (e) => {
+        if (!dragEl) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const before = chips().find((ch) => {
+          if (ch === dragEl) return false;
+          const r = ch.getBoundingClientRect();
+          return e.clientY < r.top || (e.clientY <= r.bottom && e.clientX < r.left + r.width / 2);
+        });
+        if (before !== dragEl.nextElementSibling) labelRow.insertBefore(dragEl, before || null);
+      });
+      labelRow.addEventListener("drop", (e) => {
+        if (!dragEl) return;
+        e.preventDefault();
+        dropped = true;
+      });
+    }
+
+    // Dependencies
+    const depAdd = $("#hk-dep-add");
+    if (depAdd) depAdd.addEventListener("change", () => {
+      if (depAdd.value) api.updateCard(c.id, { blocked_by: [...(c.blocked_by || []), depAdd.value] });
+    });
+    const depBlock = $("#hk-dep-block");
+    if (depBlock) depBlock.addEventListener("change", () => {
+      const other = cardIndex(this._board)[depBlock.value];
+      if (other) api.updateCard(other.id, { blocked_by: [...(other.blocked_by || []), c.id] });
+    });
+    root.querySelectorAll("[data-dep-remove]").forEach((btn) =>
+      btn.addEventListener("click", () =>
+        api.updateCard(c.id, { blocked_by: (c.blocked_by || []).filter((id) => id !== btn.dataset.depRemove) })
+      )
+    );
+    root.querySelectorAll("[data-dep-unblock]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const other = cardIndex(this._board)[btn.dataset.depUnblock];
+        if (other) api.updateCard(other.id, { blocked_by: (other.blocked_by || []).filter((id) => id !== c.id) });
+      })
+    );
 
     $("#hk-manage-labels").addEventListener("click", () =>
       openLabelManager(() => this._board, api)
@@ -257,7 +402,8 @@ export class HakanbanCardDetail extends HTMLElement {
     );
     root.querySelectorAll("[data-open-card]").forEach((el) =>
       el.addEventListener("click", (e) => {
-        if (e.target.closest("[data-unlink]")) return;
+        const btn = e.target.closest("button");
+        if (btn && btn !== el) return; // ✕ buttons inside a row
         if (this._onOpenCard) this._onOpenCard(el.dataset.openCard);
       })
     );

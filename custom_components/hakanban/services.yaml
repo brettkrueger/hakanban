@@ -53,6 +53,11 @@ add_card:
       description: Card ID of the epic this card belongs to (same board).
       selector:
         text:
+    blocked_by:
+      name: Blocked by
+      description: Card IDs (same board) that must be completed before this one.
+      selector:
+        object:
 
 move_card:
   name: Move card
@@ -130,6 +135,11 @@ update_card:
       description: Card ID of the epic this card belongs to (same board).
       selector:
         text:
+    blocked_by:
+      name: Blocked by
+      description: Card IDs (same board) that must be completed before this one.
+      selector:
+        object:
 
 add_comment:
   name: Add comment

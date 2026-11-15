@@ -162,6 +162,31 @@ export const STYLES = `
 .hk-badge.hk-done-badge { background: #61bd4f; color: #fff; }
 .hk-col-done { color: #61bd4f; font-weight: 700; font-size: .9rem; }
 .hk-completed-at { color: #3f9a2e; font-weight: 600; }
+/* card references (#12) */
+.hk-ref { color: var(--primary-color, #0079bf); font-weight: 600; cursor: pointer; border-radius: 3px; }
+.hk-ref:hover, .hk-ref:focus-visible { text-decoration: underline; outline: none; }
+.hk-ref.done { text-decoration: line-through; color: var(--hk-subtle); }
+.hk-ref.archived { color: var(--hk-subtle); font-style: italic; }
+/* dependencies */
+.hk-card.blocked { box-shadow: inset 3px 0 0 #eb5a46, 0 1px 1px rgba(9,30,66,.2); }
+.hk-badge.hk-blocked-badge { background: #eb5a46; color: #fff; }
+.hk-badge.hk-blocking-badge { background: #ff9f1a; color: #172b4d; }
+.hk-blocked-at { color: #c9372c; font-weight: 600; }
+.hk-dep-head { font-size: .8rem; font-weight: 600; color: var(--hk-subtle); margin: 8px 0 4px; }
+.hk-dep-head:first-of-type { margin-top: 0; }
+.hk-dep-state { font-weight: 600; color: #c9372c; margin-left: 4px; }
+.hk-dep-state.ok { color: #3f9a2e; }
+.hk-dep-select { margin-top: 4px; max-width: 100%; }
+.hk-dep-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 8px; border-radius: 6px; background: var(--hk-col-bg); font-size: .8rem; }
+.hk-wrap { flex-wrap: wrap; }
+/* reorderable card labels */
+.hk-label-chip.hk-sortable { cursor: grab; gap: 6px; padding-right: 4px; }
+.hk-label-chip.hk-sortable:focus-visible { outline: 2px solid var(--primary-color, #0079bf); outline-offset: 1px; }
+.hk-label-chip.dragging { opacity: .4; }
+.hk-chip-x { border: 0; background: rgba(0, 0, 0, .15); color: inherit; border-radius: 4px; width: 18px; height: 18px; padding: 0; font-size: .7rem; line-height: 18px; cursor: pointer; }
+.hk-chip-x:hover { background: rgba(0, 0, 0, .3); }
+.hk-label-add { margin-top: 6px; }
+.hk-hint { font-weight: 400; font-size: .75rem; text-transform: none; letter-spacing: 0; margin-left: 4px; }
 
 /* ---- new card dialog ---- */
 .hk-nc-grid { display: flex; gap: 0 24px; flex-wrap: wrap; }

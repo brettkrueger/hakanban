@@ -10,7 +10,8 @@ export function escapeHtml(value) {
 }
 
 // Tiny, safe-ish markdown subset: bold, italic, code, links, line breaks, bullets.
-export function renderMarkdown(text) {
+// Pass the board to turn "#12" into a link to card 12.
+export function renderMarkdown(text, board) {
   if (!text) return "";
   let html = escapeHtml(text);
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -24,7 +25,84 @@ export function renderMarkdown(text) {
   html = html.replace(/(?:^|\n)[-*] (.+)/g, "\n<li>$1</li>");
   html = html.replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
   html = html.replace(/\n/g, "<br>");
-  return html;
+  return board ? linkCardRefs(html, board) : html;
+}
+
+// Plain text (comments, checklist items, titles) with "#12" references linked.
+export function renderRefs(text, board) {
+  return linkCardRefs(escapeHtml(text), board);
+}
+
+// ---- card references ("#12") ---------------------------------------------
+
+// number -> card for a board (live cards win over archived ones).
+export function cardsByNumber(board) {
+  const map = new Map();
+  for (const c of boardCards(board)) {
+    if (!map.has(c.number) || map.get(c.number).archived) map.set(c.number, c);
+  }
+  return map;
+}
+
+// Turn "#12" in already-escaped HTML into a clickable reference to card 12. Skips tags,
+// links and code spans, and entities like "&#39;" or URL fragments ("/page#12").
+// Numbers that don't match a card on the board are left as plain text.
+export function linkCardRefs(html, board) {
+  if (!html || !board || !html.includes("#")) return html;
+  const byNum = cardsByNumber(board);
+  return html
+    .split(/(<code>[\s\S]*?<\/code>|<a\b[\s\S]*?<\/a>|<[^>]+>)/)
+    .map((part, i) => {
+      if (i % 2) return part;
+      return part.replace(/(^|[^\w&#/])#(\d+)(?!\w)/g, (m, pre, num) => {
+        const card = byNum.get(Number(num));
+        if (!card) return m;
+        const done = card.status === "completed";
+        const state = card.archived ? " (archived)" : done ? " (done)" : "";
+        const cls = `hk-ref${done ? " done" : ""}${card.archived ? " archived" : ""}`;
+        return `${pre}<span class="${cls}" role="link" tabindex="0" data-ref="${card.id}" title="${escapeHtml(card.title + state)}">#${num}</span>`;
+      });
+    })
+    .join("");
+}
+
+// ---- dependencies ----------------------------------------------------------
+// card.blocked_by lists cards that must be finished first. A blocker stops counting once
+// it's completed or archived (archived-but-open work is treated as dropped).
+
+export function cardIndex(board) {
+  return Object.fromEntries(boardCards(board).map((c) => [c.id, c]));
+}
+
+export function openBlockers(card, byId) {
+  return (card.blocked_by || [])
+    .map((id) => byId[id])
+    .filter((b) => b && b.status !== "completed" && !b.archived);
+}
+
+export function isBlocked(card, byId) {
+  return openBlockers(card, byId).length > 0;
+}
+
+// Live cards that list `card` as a blocker.
+export function dependents(card, byId) {
+  return Object.values(byId)
+    .filter((c) => !c.archived && (c.blocked_by || []).includes(card.id))
+    .sort((a, b) => a.number - b.number);
+}
+
+// Is `card` (transitively) waiting on `target`? Used to hide choices that would make a cycle.
+export function dependsOn(card, target, byId) {
+  const seen = new Set();
+  const stack = [card];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const id of cur?.blocked_by || []) {
+      if (id === target.id) return true;
+      if (!seen.has(id)) { seen.add(id); stack.push(byId[id]); }
+    }
+  }
+  return false;
 }
 
 export function formatDue(iso) {
@@ -96,16 +174,18 @@ export function emptyFilter() {
     status: "",       // "" | "open" | "completed"
     type: "",         // "" | "task" | "epic"
     epic: "",         // "" | <epic card id> | "__none" (cards without an epic)
+    deps: "",         // "" | "blocked" | "ready" (open, nothing blocking it) | "blocking"
   };
 }
 
 // How many filter dimensions are active (search excluded), for the toolbar badge.
 export function activeFilterCount(f) {
   if (!f) return 0;
-  return (f.labels?.size ? 1 : 0) + ["due", "status", "type", "epic"].filter((k) => f[k]).length;
+  return (f.labels?.size ? 1 : 0) + ["due", "status", "type", "epic", "deps"].filter((k) => f[k]).length;
 }
 
-export function cardMatchesFilter(card, f) {
+// `byId` (from cardIndex) is needed for the dependency filter.
+export function cardMatchesFilter(card, f, byId) {
   if (!f) return true;
   const labels = card.labels || [];
   if (f.labels?.size) {
@@ -128,6 +208,12 @@ export function cardMatchesFilter(card, f) {
   if (f.epic === "__none" && (card.epic_id || card.card_type === "epic")) return false;
   // An epic filter shows the epic itself alongside its children.
   if (f.epic && f.epic !== "__none" && card.epic_id !== f.epic && card.id !== f.epic) return false;
+  if (f.deps && byId) {
+    const open = card.status !== "completed";
+    if (f.deps === "blocked" && !(open && isBlocked(card, byId))) return false;
+    if (f.deps === "ready" && !(open && !isBlocked(card, byId))) return false;
+    if (f.deps === "blocking" && !(open && dependents(card, byId).some((d) => d.status !== "completed"))) return false;
+  }
   const query = (f.query || "").toLowerCase();
   if (query) {
     const hay = `${card.title} ${card.description || ""} #${card.number}`.toLowerCase();
