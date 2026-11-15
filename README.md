@@ -36,6 +36,7 @@ v1 ships the **Core + multi-line paste** scope:
   dragging their headers (native HTML5 drag-and-drop — no build step, no external library).
 - **Labels** — colour + name per board. Rename, recolour, add or delete them from the toolbar's
   🏷 button or **✎ Edit labels** on a card; deleting a label removes it from every card.
+  Colours come from the preset palette, the browser's colour picker, or a typed hex value.
 - **Filters** — the ⚑ bar filters by labels (match *any* or *all*), due date (overdue, due
   within 24h, has / no due date), status (open / done), type (tasks / epics) and epic.
   Combine with search; the ⚑ button shows how many filters are active.
@@ -43,6 +44,8 @@ v1 ships the **Core + multi-line paste** scope:
   progress bar (completed children / total) on the board; child cards show their epic's name.
   From an epic, add new cards to it, pull in existing cards, or open a child. Filter the board
   down to one epic.
+- **Board backgrounds** — preset colours and gradients from the 🎨 bar, or any custom
+  colour via the colour picker / hex field.
 - **Automatic archival** — in a list's ⚙ settings, archive cards after *N* days in that
   list (e.g. clear out *Done* after 7 days). Checked hourly; the clock starts when a card
   enters the list. The toolbar's 🗄 button lists archived cards so you can open, restore or

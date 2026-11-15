@@ -221,6 +221,21 @@ export const STYLES = `
 .hk-lm-count { color: var(--hk-subtle); font-size: .75rem; min-width: 2ch; text-align: right; }
 .hk-lm-palette { padding: 2px 0 8px 42px; }
 
+/* ---- custom colour picker ---- */
+.hk-color-custom { display: inline-flex; gap: 6px; align-items: center; }
+.hk-color-custom input[type="color"] {
+  width: 34px; height: 30px; padding: 0; border: 1px solid var(--hk-divider); border-radius: 6px;
+  background: none; cursor: pointer;
+}
+.hk-color-custom input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+.hk-color-custom input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.hk-color-custom .hk-hex {
+  width: 6.5em; padding: 5px 6px; border-radius: 6px; border: 1px solid var(--hk-divider);
+  background: var(--hk-col-bg); color: var(--hk-text); font: inherit; font-family: monospace;
+}
+.hk-color-custom .hk-hex.invalid { border-color: #eb5a46; outline: 1px solid #eb5a46; }
+.hk-btn:disabled { opacity: .5; cursor: default; }
+
 /* ---- archive drawer ---- */
 .hk-archive-list { max-height: 60vh; overflow-y: auto; }
 .hk-archive-item {

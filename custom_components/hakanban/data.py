@@ -68,6 +68,34 @@ def _parse_ts(value: Any) -> datetime.datetime | None:
     return parsed
 
 
+_HEX_COLOR = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+# Gradients from the background picker, e.g. "linear-gradient(135deg,#667eea,#764ba2)".
+# Restricted charset: colours end up in inline CSS, so nothing that could break out of it.
+_GRADIENT = re.compile(r"^linear-gradient\([#0-9a-zA-Z.,%\s-]{1,200}\)$")
+_FALLBACK_LABEL_COLOR = "#838c91"
+
+
+def _normalize_color(value: Any) -> str:
+    """Return ``value`` as lowercase ``#rrggbb``; raise for anything that isn't hex."""
+    match = _HEX_COLOR.match(str(value or "").strip())
+    if not match:
+        raise HakanbanError(f"Invalid colour {value!r}: use a hex value like #1a2b3c")
+    digits = match.group(1).lower()
+    if len(digits) == 3:
+        digits = "".join(ch * 2 for ch in digits)
+    return f"#{digits}"
+
+
+def _normalize_background(value: Any) -> str | None:
+    """A board background: ``None``/empty (none), a hex colour, or a linear-gradient."""
+    if value is None or not str(value).strip():
+        return None
+    text = str(value).strip()
+    if _GRADIENT.match(text):
+        return text
+    return _normalize_color(text)
+
+
 def _undoable(method: Callable[..., _T]) -> Callable[..., _T]:
     """Snapshot the whole document before a mutation so it can be undone.
 
@@ -153,6 +181,16 @@ class HakanbanData:
         for board in self.boards.values():
             for col in board.get("columns", []):
                 col.setdefault("auto_archive_days", None)
+            # Colours are rendered into inline CSS, so drop anything that isn't valid.
+            for label in board.get("label_defs", []):
+                try:
+                    label["color"] = _normalize_color(label.get("color"))
+                except HakanbanError:
+                    label["color"] = _FALLBACK_LABEL_COLOR
+            try:
+                board["background"] = _normalize_background(board.get("background"))
+            except HakanbanError:
+                board["background"] = None
         for card in self.cards.values():
             card.setdefault("card_type", CARD_TYPE_TASK)
             card.setdefault("epic_id", None)
@@ -297,7 +335,7 @@ class HakanbanData:
         board = {
             "id": board_id,
             "title": self._unique_board_title(title),
-            "background": background,
+            "background": _normalize_background(background),
             "archived": False,
             "label_defs": [dict(label) for label in DEFAULT_LABELS],
             "columns": [],
@@ -314,10 +352,13 @@ class HakanbanData:
     @_undoable
     def update_board(self, board_id: str, **changes: Any) -> dict[str, Any]:
         board = self._require_board(board_id)
+        # Validate before writing anything, so a bad colour can't leave a half-applied update.
+        if "background" in changes:
+            background = _normalize_background(changes["background"])  # None / "" clears it
         if changes.get("title") is not None:
             board["title"] = self._unique_board_title(changes["title"], exclude_id=board_id)
         if "background" in changes:
-            board["background"] = changes["background"]  # None clears it (no background)
+            board["background"] = background
         if changes.get("archived") is not None:
             board["archived"] = changes["archived"]
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "updated"})
@@ -658,7 +699,7 @@ class HakanbanData:
     @_undoable
     def create_label(self, board_id: str, name: str, color: str) -> dict[str, Any]:
         board = self._require_board(board_id)
-        label = {"id": _uid(), "name": name or "", "color": color}
+        label = {"id": _uid(), "name": name or "", "color": _normalize_color(color)}
         board.setdefault("label_defs", []).append(label)
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "label_created"})
         return label
@@ -668,9 +709,10 @@ class HakanbanData:
         board = self._require_board(board_id)
         for label in board.get("label_defs", []):
             if label["id"] == label_id:
-                for key in ("name", "color"):
-                    if key in changes and changes[key] is not None:
-                        label[key] = changes[key]
+                if changes.get("color") is not None:
+                    label["color"] = _normalize_color(changes["color"])
+                if changes.get("name") is not None:
+                    label["name"] = changes["name"]
                 self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "label_updated"})
                 return label
         raise HakanbanError(f"Unknown label {label_id}")

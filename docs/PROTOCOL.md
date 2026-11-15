@@ -126,6 +126,13 @@ Undo/redo is **store-wide** and snapshot-based: every mutation (from the panel, 
 action can be reverted regardless of which client made it. A new mutation clears the redo stack;
 history is capped at `UNDO_HISTORY_LIMIT` (50) states and reset to empty on load.
 
+Colours are validated server-side because they're rendered into inline CSS. Label `color`
+must be hex (`#rgb`, `#rrggbb`, with or without `#`) and is stored as lowercase `#rrggbb`.
+A board `background` is `null`/empty (none), a hex colour (same rules), or a
+`linear-gradient(...)` made only of letters, digits, `#`, `.`, `,`, `%`, `-` and spaces.
+Anything else is rejected with `invalid_request`; invalid values already in an older store
+are reset on load (labels to `#838c91`, backgrounds to `null`).
+
 The card's type field is `card_type`, not `type`, because `type` is the websocket message's
 own command key.
 

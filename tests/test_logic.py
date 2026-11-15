@@ -341,11 +341,32 @@ def run():
     check("0 turns the rule off", mgr.boards[ebid]["columns"][2]["auto_archive_days"] is None)
     check("no sweep with rule off", mgr.auto_archive(T0 + datetime.timedelta(days=365)) == [])
 
+    # ------------------------------------------------------------ colours
+    cl = mgr.create_label(ebid, "Custom", "#ABC")
+    check("3-digit hex expanded + lowercased", cl["color"] == "#aabbcc")
+    mgr.update_label(ebid, cl["id"], color="12Ab9F")
+    check("hex without # accepted", mgr.boards[ebid]["label_defs"][-1]["color"] == "#12ab9f")
+    check("non-hex label colour rejected",
+          raises(lambda: mgr.update_label(ebid, cl["id"], color='red;"><script>')))
+    check("bad colour on create rejected", raises(lambda: mgr.create_label(ebid, "x", "rgb(1,2,3)")))
+    check("rejected update leaves colour", mgr.boards[ebid]["label_defs"][-1]["color"] == "#12ab9f")
+    mgr.update_board(ebid, background="#FF8800")
+    check("hex background normalised", mgr.boards[ebid]["background"] == "#ff8800")
+    mgr.update_board(ebid, background="linear-gradient(135deg,#667eea,#764ba2)")
+    check("gradient background kept", mgr.boards[ebid]["background"].startswith("linear-gradient("))
+    title_before = mgr.boards[ebid]["title"]
+    check("unsafe background rejected",
+          raises(lambda: mgr.update_board(ebid, title="Changed", background="url(javascript:x)")))
+    check("rejected background leaves title untouched", mgr.boards[ebid]["title"] == title_before)
+    mgr.update_board(ebid, background="")
+    check("empty background clears", mgr.boards[ebid]["background"] is None)
+
     # Older stores get the new fields back-filled on load.
     legacy = data.HakanbanData(FakeHass(), FakeStore())
     legacy._data = {
         "boards": {"b": {"id": "b", "title": "L", "columns": [{"id": "c", "title": "C", "order": 0}],
-                         "label_defs": [], "card_seq": 1}},
+                         "label_defs": [{"id": "l", "name": "", "color": "x;}</style>"}],
+                         "background": "url(evil)", "card_seq": 1}},
         "cards": {"x": {"id": "x", "board_id": "b", "column_id": "c", "order": 0, "number": 1,
                         "title": "Old", "updated": "2026-01-01T00:00:00+00:00"}},
     }
@@ -356,6 +377,9 @@ def run():
           and lc["column_entered"] == "2026-01-01T00:00:00+00:00")
     check("legacy column normalised",
           legacy.boards["b"]["columns"][0]["auto_archive_days"] is None)
+    check("legacy invalid colours sanitised",
+          legacy.boards["b"]["label_defs"][0]["color"] == "#838c91"
+          and legacy.boards["b"]["background"] is None)
 
     failed = [n for n, ok in RESULTS if not ok]
     print()

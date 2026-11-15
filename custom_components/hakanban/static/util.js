@@ -48,9 +48,20 @@ export function dueState(iso, complete) {
   return "";
 }
 
+// "#abc", "abc", "#AABBCC" -> "#aabbcc"; anything else -> null. Mirrors the backend's
+// _normalize_color so the UI can validate before sending.
+export function normalizeHex(value) {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(value ?? "").trim());
+  if (!m) return null;
+  let d = m[1].toLowerCase();
+  if (d.length === 3) d = [...d].map((ch) => ch + ch).join("");
+  return "#" + d;
+}
+
 // Pick a readable text colour for a label background.
 export function contrastText(hex) {
-  if (!hex || hex[0] !== "#") return "#fff";
+  hex = normalizeHex(hex);
+  if (!hex) return "#fff";
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);

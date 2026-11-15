@@ -3,7 +3,7 @@
 // board re-render from a live push never wipes it out.
 
 import { STYLES } from "./styles.js";
-import { escapeHtml, contrastText, boardCards } from "./util.js";
+import { escapeHtml, contrastText, boardCards, normalizeHex } from "./util.js";
 
 export const PALETTE = [
   "#61bd4f", "#f2d600", "#ff9f1a", "#eb5a46", "#c377e0",
@@ -37,6 +37,51 @@ export function openDialog(title, bodyHtml, { width = 460 } = {}) {
   return { root, close };
 }
 
+// A custom colour control: the browser's native colour picker (spectrum / wheel, plus an
+// eyedropper in Chromium) next to a hex field. `prefix` namespaces the element ids.
+// With `apply: true` an Apply button commits the hex field; picking in the native picker
+// commits straight away.
+export function colorInputHtml(prefix, value, { apply = true } = {}) {
+  const hex = normalizeHex(value) || "#838c91";
+  return `<span class="hk-color-custom">
+      <input type="color" id="${prefix}-wheel" value="${hex}" title="Pick any colour">
+      <input type="text" id="${prefix}-hex" class="hk-hex" value="${hex}" maxlength="7" placeholder="#rrggbb" spellcheck="false" aria-label="Hex colour">
+      ${apply ? `<button class="hk-btn" id="${prefix}-apply">Apply</button>` : ""}
+    </span>`;
+}
+
+// Wire a colorInputHtml control. onPick(hex) gets a normalised "#rrggbb".
+export function wireColorInput(root, prefix, onPick, { apply = true } = {}) {
+  const wheel = root.getElementById(`${prefix}-wheel`);
+  const text = root.getElementById(`${prefix}-hex`);
+  const btn = root.getElementById(`${prefix}-apply`);
+  if (!wheel || !text) return;
+  const validate = () => {
+    const hex = normalizeHex(text.value);
+    text.classList.toggle("invalid", !hex);
+    if (btn) btn.disabled = !hex;
+    return hex;
+  };
+  wheel.addEventListener("input", () => {
+    text.value = wheel.value;
+    validate();
+    if (!apply) onPick(wheel.value);
+  });
+  // "change" fires when the native picker closes: commit the choice.
+  wheel.addEventListener("change", () => onPick(wheel.value));
+  text.addEventListener("input", () => {
+    const hex = validate();
+    if (hex) wheel.value = hex;
+    if (hex && !apply) onPick(hex);
+  });
+  const commit = () => {
+    const hex = validate();
+    if (hex) onPick(hex);
+  };
+  text.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } });
+  if (btn) btn.addEventListener("click", commit);
+}
+
 function swatches(selected, attr) {
   return PALETTE.map(
     (c) => `<span class="hk-swatch ${c === selected ? "selected" : ""}" ${attr}="${c}" title="${c}" style="background:${c}"></span>`
@@ -63,7 +108,7 @@ export function openLabelManager(getBoard, api) {
         <span class="hk-lm-count" title="Cards using this label">${usage[l.id] || 0}</span>
         <button class="hk-btn secondary" data-del="${l.id}" title="Delete label">🗑</button>
       </div>
-      ${editing === l.id ? `<div class="hk-row hk-lm-palette">${swatches(l.color, "data-recolor")}</div>` : ""}`
+      ${editing === l.id ? `<div class="hk-row hk-lm-palette">${swatches(l.color, "data-recolor")}${colorInputHtml("hk-lm-recolor", l.color)}</div>` : ""}`
     ).join("");
     root.getElementById("hk-lm").innerHTML = `
       ${rows || `<p class="hk-muted">No labels yet.</p>`}
@@ -73,7 +118,7 @@ export function openLabelManager(getBoard, api) {
           <input type="text" id="hk-lm-new" placeholder="Label name" maxlength="40" style="flex:1">
           <button class="hk-btn" id="hk-lm-add">Add</button>
         </div>
-        <div class="hk-row" style="margin-top:6px">${swatches(newColor, "data-newcolor")}</div>
+        <div class="hk-row" style="margin-top:6px">${swatches(newColor, "data-newcolor")}${colorInputHtml("hk-lm-newcolor", newColor, { apply: false })}</div>
       </div>
       <div class="hk-modal-actions"><span class="grow"></span><button class="hk-btn" id="hk-lm-done">Done</button></div>`;
     wire();
@@ -98,14 +143,17 @@ export function openLabelManager(getBoard, api) {
         render();
       })
     );
+    const recolor = async (color) => {
+      const id = editing;
+      if (!id) return;
+      editing = null;
+      await api.updateLabel(board.id, id, { color });
+      render();
+    };
     root.querySelectorAll("[data-recolor]").forEach((sw) =>
-      sw.addEventListener("click", async () => {
-        const id = editing;
-        editing = null;
-        await api.updateLabel(board.id, id, { color: sw.dataset.recolor });
-        render();
-      })
+      sw.addEventListener("click", () => recolor(sw.dataset.recolor))
     );
+    wireColorInput(root, "hk-lm-recolor", recolor);
     root.querySelectorAll("[data-del]").forEach((btn) =>
       btn.addEventListener("click", async () => {
         const label = board.labels.find((l) => l.id === btn.dataset.del);
@@ -119,14 +167,20 @@ export function openLabelManager(getBoard, api) {
         render();
       })
     );
+    const setNewColor = (color, fromCustom = false) => {
+      newColor = color;
+      root.querySelectorAll("[data-newcolor]").forEach((s) =>
+        s.classList.toggle("selected", s.dataset.newcolor === newColor)
+      );
+      if (!fromCustom) {
+        root.getElementById("hk-lm-newcolor-wheel").value = color;
+        root.getElementById("hk-lm-newcolor-hex").value = color;
+      }
+    };
     root.querySelectorAll("[data-newcolor]").forEach((sw) =>
-      sw.addEventListener("click", () => {
-        newColor = sw.dataset.newcolor;
-        root.querySelectorAll("[data-newcolor]").forEach((s) =>
-          s.classList.toggle("selected", s.dataset.newcolor === newColor)
-        );
-      })
+      sw.addEventListener("click", () => setNewColor(sw.dataset.newcolor))
     );
+    wireColorInput(root, "hk-lm-newcolor", (hex) => setNewColor(hex, true), { apply: false });
     const nameInput = root.getElementById("hk-lm-new");
     const add = async () => {
       await api.createLabel(board.id, nameInput.value.trim(), newColor);

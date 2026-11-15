@@ -6,7 +6,7 @@ import {
   escapeHtml, contrastText, debounce, formatDue,
   emptyFilter, activeFilterCount, boardEpics,
 } from "./util.js";
-import { openDialog, openLabelManager } from "./dialogs.js";
+import { openDialog, openLabelManager, colorInputHtml, wireColorInput } from "./dialogs.js";
 import "./board-view.js";
 
 const BACKGROUNDS = [
@@ -231,11 +231,14 @@ export class HakanbanPanel extends HTMLElement {
         <button class="hk-btn secondary" data-clearf ${activeFilterCount(f) ? "" : "disabled"}>Clear filters</button>
       </div>`;
     } else if (this._showBg) {
+      const current = board.background || "";
       const sw = BACKGROUNDS.map(
         (bg) =>
-          `<span data-bg="${bg}" title="${bg || "None"}" style="display:inline-block;width:28px;height:28px;border-radius:6px;cursor:pointer;border:1px solid var(--hk-divider);background:${bg || "var(--card-background-color)"}"></span>`
+          `<span class="hk-swatch ${bg === current ? "selected" : ""}" data-bg="${escapeHtml(bg)}" title="${escapeHtml(bg || "None")}" style="width:28px;height:28px;border:1px solid var(--hk-divider);background:${bg || "var(--card-background-color)"}"></span>`
       ).join("");
-      html = `<div class="hk-row" style="padding:8px 16px;border-bottom:1px solid var(--hk-divider)"><strong style="margin-right:6px">Background:</strong>${sw}</div>`;
+      // Seed the custom picker with the current colour (gradients fall back to grey).
+      html = `<div class="hk-row" style="padding:8px 16px;border-bottom:1px solid var(--hk-divider)"><strong style="margin-right:6px">Background:</strong>${sw}
+        <span class="hk-muted" style="margin-left:6px">Custom</span>${colorInputHtml("hk-bg", current)}</div>`;
     }
     bar.innerHTML = html;
 
@@ -261,6 +264,9 @@ export class HakanbanPanel extends HTMLElement {
     bar.querySelectorAll("[data-bg]").forEach((el) =>
       el.addEventListener("click", () => this._api.updateBoard(board.id, { background: el.dataset.bg || null }))
     );
+    if (this._showBg) {
+      wireColorInput(this.shadowRoot, "hk-bg", (hex) => this._api.updateBoard(board.id, { background: hex }));
+    }
   }
 
   // Drop filter values that no longer exist on the board (deleted label / epic).
