@@ -7,6 +7,7 @@ import {
   escapeHtml,
   renderMarkdown,
   formatDue,
+  formatTimestamp,
   contrastText,
   boardCards,
   boardEpics,
@@ -142,7 +143,11 @@ export class HakanbanCardDetail extends HTMLElement {
           ${c.archived ? `<div class="hk-archived-banner">🗄 This card is archived.</div>` : ""}
           ${isEpic ? `<span class="hk-epic-tag">EPIC</span>` : ""}
           <h2><textarea class="hk-title-edit" rows="1">${escapeHtml(c.title)}</textarea></h2>
-          <div class="hk-meta">#${c.number} · in <strong>${escapeHtml(colTitle(c.column_id))}</strong></div>
+          <div class="hk-meta">#${c.number} · in <strong>${escapeHtml(colTitle(c.column_id))}</strong>${
+            c.status === "completed" && c.completed
+              ? ` · <span class="hk-completed-at">✓ Completed ${escapeHtml(formatTimestamp(c.completed))}</span>`
+              : ""
+          }</div>
 
           <div class="hk-section">
             <h3>Type</h3>
@@ -165,7 +170,6 @@ export class HakanbanCardDetail extends HTMLElement {
             <h3>Due date</h3>
             <div class="hk-row">
               <input type="datetime-local" id="hk-due" value="${dueLocal}">
-              <label><input type="checkbox" id="hk-due-complete" ${c.due_complete ? "checked" : ""}> Complete</label>
               <button class="hk-btn secondary" id="hk-due-clear">Clear</button>
             </div>
           </div>
@@ -279,11 +283,8 @@ export class HakanbanCardDetail extends HTMLElement {
       const v = e.target.value;
       api.updateCard(c.id, { due: v ? v + ":00" : null });
     });
-    $("#hk-due-complete").addEventListener("change", (e) =>
-      api.updateCard(c.id, { due_complete: e.target.checked })
-    );
     $("#hk-due-clear").addEventListener("click", () =>
-      api.updateCard(c.id, { due: null, due_complete: false })
+      api.updateCard(c.id, { due: null })
     );
 
     // Description

@@ -59,11 +59,17 @@ v1 ships the **Core + multi-line paste** scope:
   browser.
 - **Board backgrounds** — preset colours and gradients from the 🎨 bar, or any custom
   colour via the colour picker / hex field.
+- **Done lists** — a list marked *done* (⚙ list settings; a list called "Done" is one by
+  default) completes the cards in it. Moving a card in records the completion time, shown as
+  a green ✓ badge on the card and as "✓ Completed …" in the card view; moving it out reopens
+  it. Ticking a card off in Home Assistant (its to-do list, a service, Assist) moves it into the
+  done list, and unticking moves it back to the first open list. Done lists show a ✓ next to
+  their title.
 - **Automatic archival** — in a list's ⚙ settings, archive cards after *N* days in that
   list (e.g. clear out *Done* after 7 days). Checked hourly; the clock starts when a card
   enters the list. The toolbar's 🗄 button lists archived cards so you can open, restore or
   delete them.
-- **Due dates** — with a due-complete checkbox. Cards with a due date also surface on the
+- **Due dates** — the badge turns green once the card is completed. Cards with a due date also surface on the
   board's native HA **`calendar` entity**, so dated tasks appear in Home Assistant's Calendar
   panel and dashboard card.
 - **Comments / activity** on a card.
@@ -185,8 +191,9 @@ Every mutation fires a Home Assistant event you can trigger automations on:
 
 ## Example automations
 
-**Notify when a card lands in a "Done" column.** Trigger on the move event and match the
-target column id:
+**Notify when a card is completed.** `hakanban_card_completed` fires when a card enters a
+done list (or is ticked off anywhere else). To react to one specific list instead, trigger
+on the move event and match the target column id:
 
 ```yaml
 automation:

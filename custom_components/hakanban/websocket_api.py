@@ -148,11 +148,12 @@ def ws_create_column(hass, connection, msg, manager: HakanbanData):
         vol.Optional("title"): str,
         vol.Optional("archived"): bool,
         vol.Optional("auto_archive_days"): vol.Any(None, vol.All(int, vol.Range(min=0))),
+        vol.Optional("done"): bool,
     }
 )
 @_guard
 def ws_update_column(hass, connection, msg, manager: HakanbanData):
-    changes = {k: msg[k] for k in ("title", "archived", "auto_archive_days") if k in msg}
+    changes = {k: msg[k] for k in ("title", "archived", "auto_archive_days", "done") if k in msg}
     return manager.update_column(msg["board_id"], msg["column_id"], **changes)
 
 

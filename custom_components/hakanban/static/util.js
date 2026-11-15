@@ -38,6 +38,14 @@ export function formatDue(iso) {
   return d.toLocaleString(undefined, opts);
 }
 
+// Full local date + time, for "Completed …" stamps and tooltips.
+export function formatTimestamp(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export function dueState(iso, complete) {
   if (!iso || complete) return complete ? "done" : "";
   const now = new Date();
@@ -107,7 +115,7 @@ export function cardMatchesFilter(card, f) {
     if (!hit) return false;
   }
   if (f.due) {
-    const ds = dueState(card.due, card.due_complete);
+    const ds = dueState(card.due, card.status === "completed");
     if (f.due === "has" && !card.due) return false;
     if (f.due === "none" && card.due) return false;
     if (f.due === "overdue" && ds !== "overdue") return false;

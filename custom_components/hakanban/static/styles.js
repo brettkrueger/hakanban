@@ -158,6 +158,11 @@ export const STYLES = `
 .hk-check-item.done span { text-decoration: line-through; color: var(--hk-subtle); }
 .hk-muted { color: var(--hk-subtle); font-size: .8rem; }
 
+/* ---- completion ---- */
+.hk-badge.hk-done-badge { background: #61bd4f; color: #fff; }
+.hk-col-done { color: #61bd4f; font-weight: 700; font-size: .9rem; }
+.hk-completed-at { color: #3f9a2e; font-weight: 600; }
+
 /* ---- new card dialog ---- */
 .hk-nc-grid { display: flex; gap: 0 24px; flex-wrap: wrap; }
 .hk-nc-grid .hk-section { margin: 8px 0; }

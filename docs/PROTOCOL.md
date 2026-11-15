@@ -18,7 +18,8 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       ],
       "columns": [
         { "id": "<column_id>", "title": "To Do", "order": 0, "archived": false,
-          "auto_archive_days": null }   // int N: archive cards after N days in this list
+          "auto_archive_days": null,    // int N: archive cards after N days in this list
+          "done": false }               // true: cards in this list are completed
       ],
       "card_seq": 12,                  // monotonic per-board card number counter
       "created": "<iso8601>"
@@ -38,9 +39,9 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       "labels": ["<label_id>", ...],
       "assignees": ["person.neil", ...],
       "due": null,                     // iso8601 or null
-      "due_complete": false,
+      "due_complete": false,           // deprecated: mirrors status == completed
       "status": "needs_action",        // "needs_action" | "completed"
-      "completed": "<iso8601>",        // present only when status == completed
+      "completed": "<iso8601>",        // when it was completed; present only when status == completed
       "checklists": [
         { "id": "<id>", "title": "Steps", "items": [ { "id": "<id>", "text": "x", "done": false } ] }
       ],
@@ -55,8 +56,10 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
 }
 ```
 
-Fields added after v0.1.8 (`card_type`, `epic_id`, `column_entered`, `auto_archive_days`) are
-back-filled on load, so older stores need no migration.
+Fields added after v0.1.8 (`card_type`, `epic_id`, `column_entered`, `auto_archive_days`,
+`done`) are back-filled on load, so older stores need no migration. A list without a `done`
+key gets `done: true` if its title is "Done" (case-insensitive); see *Done lists* for how
+existing cards are brought into line.
 
 `status` deliberately mirrors `todo.TodoItemStatus` so each card maps 1:1 onto a todo item.
 
@@ -100,12 +103,12 @@ optimistic update and reconcile on the next push.
 | `hakanban/update_board` | `board_id`, `title?`, `background?`, `archived?` | board |
 | `hakanban/delete_board` | `board_id` | `{deleted: board_id}` |
 | `hakanban/create_column` | `board_id`, `title` | column |
-| `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?`, `auto_archive_days?` (int ≥ 0; 0/null = off) | column |
+| `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?`, `auto_archive_days?` (int ≥ 0; 0/null = off), `done?` (bool) | column |
 | `hakanban/delete_column` | `board_id`, `column_id` | `{deleted: column_id}` |
 | `hakanban/move_column` | `board_id`, `column_id`, `position` (int) | `{ok: true}` |
 | `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?` | card |
 | `hakanban/paste_cards` | `board_id`, `column_id`, `text` (newline-separated) **or** `titles[]` | `{cards:[…]}` |
-| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/due_complete/status/cover/archived/card_type/epic_id` (`due`, `cover`, `epic_id` accept `null` to clear) | card |
+| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/status/cover/archived/card_type/epic_id` (`due`, `cover`, `epic_id` accept `null` to clear; legacy `due_complete` is an alias for `status`) | card |
 | `hakanban/move_card` | `card_id`, `to_column`, `position?` (int), `to_board?` | card |
 | `hakanban/delete_card` | `card_id` | `{deleted: card_id}` |
 | `hakanban/create_label` | `board_id`, `name`, `color` | label |
@@ -148,6 +151,29 @@ A card with `card_type: "epic"` groups other cards on the **same board** through
 
 Epic progress is derived in the frontend: children = cards whose `epic_id` is the epic,
 excluding archived cards that were never completed; done = `status == "completed"`.
+
+### Done lists
+
+A list with `done: true` completes the cards in it. On a board with at least one done list a
+card's `status` always matches its list:
+
+* Moving a card into a done list sets `status: "completed"` and stamps `completed` with the
+  time; moving it out sets `needs_action` and removes `completed`. Reordering within done lists
+  changes nothing.
+* Completing a card any other way (`update_card` with `status`, `hakanban.update_card`, the
+  HA to-do list checkbox, Assist) moves it to the end of the first done list; reopening it
+  moves it to the end of the first open list. Each such move also fires `hakanban_card_moved`.
+* A card created in a done list starts completed; the requested `status` is ignored.
+* Turning `done` on or off for a list re-syncs every live card on the board, in the same undo
+  step.
+
+On a board with no done list, `status` is set directly and cards never move.
+`hakanban_card_completed` fires whenever a card becomes completed, by either route.
+`due_complete` is kept only as a mirror of `status == "completed"`.
+
+On load, in boards that have a done list, live cards already in it are completed with
+`completed` = their `column_entered`, and completed cards in other lists are moved to the
+end of the first done list (keeping their `completed` stamp).
 
 ### Automatic archival
 

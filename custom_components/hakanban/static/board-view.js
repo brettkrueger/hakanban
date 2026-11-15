@@ -7,6 +7,7 @@ import { openColumnSettings, openNewCardDialog } from "./dialogs.js";
 import {
   escapeHtml,
   formatDue,
+  formatTimestamp,
   dueState,
   contrastText,
   emptyFilter,
@@ -95,9 +96,12 @@ export class HakanbanBoard extends HTMLElement {
           `<span class="hk-label" style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "")}</span>`
       )
       .join("");
-    const ds = dueState(card.due, card.due_complete);
+    const done = card.status === "completed";
+    const ds = dueState(card.due, done);
     const badges = [];
     badges.push(`<span class="hk-card-number">#${card.number}</span>`);
+    if (done && card.completed)
+      badges.push(`<span class="hk-badge hk-done-badge" title="Completed ${escapeHtml(formatTimestamp(card.completed))}">✓ ${escapeHtml(formatDue(card.completed))}</span>`);
     if (card.due)
       badges.push(`<span class="hk-badge due-${ds}">🕑 ${escapeHtml(formatDue(card.due))}</span>`);
     if (card.description) badges.push(`<span class="hk-badge">≡</span>`);
@@ -160,6 +164,7 @@ export class HakanbanBoard extends HTMLElement {
     return `
         <div class="hk-col-head" draggable="true" data-colhead="${col.id}">
           <span class="hk-col-title" data-coltitle="${col.id}">${escapeHtml(col.title)}</span>
+          ${col.done ? `<span class="hk-col-done" title="Cards in this list are done">✓</span>` : ""}
           ${col.auto_archive_days ? `<span class="hk-col-auto" title="Cards are archived after ${col.auto_archive_days} day(s) in this list">🗄 ${col.auto_archive_days}d</span>` : ""}
           <span class="hk-col-count">${count}</span>
           <button class="hk-col-menu" data-colsettings="${col.id}" title="List settings">⚙</button>

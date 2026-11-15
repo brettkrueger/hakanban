@@ -96,6 +96,11 @@ def _normalize_background(value: Any) -> str | None:
     return _normalize_color(text)
 
 
+def _looks_done(title: Any) -> bool:
+    """Default for a list's ``done`` flag: a list called "Done" completes its cards."""
+    return str(title or "").strip().lower() == "done"
+
+
 def _undoable(method: Callable[..., _T]) -> Callable[..., _T]:
     """Snapshot the whole document before a mutation so it can be undone.
 
@@ -181,6 +186,9 @@ class HakanbanData:
         for board in self.boards.values():
             for col in board.get("columns", []):
                 col.setdefault("auto_archive_days", None)
+                # Lists created before "done lists" existed: a list titled "Done" is one.
+                if "done" not in col:
+                    col["done"] = _looks_done(col.get("title"))
             # Colours are rendered into inline CSS, so drop anything that isn't valid.
             for label in board.get("label_defs", []):
                 try:
@@ -195,6 +203,25 @@ class HakanbanData:
             card.setdefault("card_type", CARD_TYPE_TASK)
             card.setdefault("epic_id", None)
             card.setdefault("column_entered", card.get("updated") or card.get("created") or _now())
+        # Status now follows the list on boards that have a done list. Cards already sitting
+        # in one are completed (stamped with when they entered it); cards completed elsewhere
+        # (e.g. ticked in an HA to-do list) are moved into the done list rather than reopened.
+        for board in self.boards.values():
+            done_cols = self._done_columns(board)
+            if not done_cols:
+                continue
+            done_ids = {c["id"] for c in done_cols}
+            for card in self.cards_in_board(board["id"]):
+                if card["column_id"] in done_ids:
+                    if card.get("status") != STATUS_COMPLETED:
+                        self._set_completion(card, True, card.get("column_entered"))
+                elif card.get("status") == STATUS_COMPLETED:
+                    target = self.cards_in_column(done_cols[0]["id"])
+                    card["order"] = (target[-1]["order"] + ORDER_STEP) if target else 0
+                    card["column_id"] = done_cols[0]["id"]
+        for card in self.cards.values():
+            # The separate "due complete" tick is gone: it mirrors completion now.
+            card["due_complete"] = card.get("status") == STATUS_COMPLETED
 
     async def async_save_now(self) -> None:
         await self._store.async_save(self._data)
@@ -225,6 +252,49 @@ class HakanbanData:
             if col["id"] == column_id:
                 return col
         raise HakanbanError(f"Unknown column {column_id}")
+
+    # ------------------------------------------------------------ completion
+    # A board's "done" lists complete the cards in them. On a board with at least one,
+    # a card's status always matches its list: moving into a done list completes it,
+    # moving out reopens it, and completing / reopening it any other way (HA to-do list,
+    # services, Assist) moves it to the first done list / first open list.
+    @staticmethod
+    def _done_columns(board: dict[str, Any]) -> list[dict[str, Any]]:
+        return sorted(
+            (c for c in board["columns"] if c.get("done") and not c.get("archived")),
+            key=lambda c: c.get("order", 0),
+        )
+
+    @staticmethod
+    def _open_columns(board: dict[str, Any]) -> list[dict[str, Any]]:
+        return sorted(
+            (c for c in board["columns"] if not c.get("done") and not c.get("archived")),
+            key=lambda c: c.get("order", 0),
+        )
+
+    def _column_is_done(self, board: dict[str, Any], column_id: str) -> bool:
+        return any(c["id"] == column_id for c in self._done_columns(board))
+
+    @staticmethod
+    def _set_completion(card: dict[str, Any], completed: bool, when: str | None = None) -> bool:
+        """Set status + the completion stamp. Returns True if the card was newly completed."""
+        was = card.get("status") == STATUS_COMPLETED
+        card["due_complete"] = completed
+        if completed and not was:
+            card["status"] = STATUS_COMPLETED
+            card["completed"] = when or _now()
+            return True
+        if not completed and was:
+            card["status"] = STATUS_NEEDS_ACTION
+            card.pop("completed", None)
+        return False
+
+    def _sync_board_completion(self, board: dict[str, Any]) -> None:
+        """Make every live card's status match its list (after a list's done flag changes)."""
+        if not self._done_columns(board):
+            return
+        for card in self.cards_in_board(board["id"]):
+            self._set_completion(card, self._column_is_done(board, card["column_id"]))
 
     @staticmethod
     def _reindex(items: list[dict[str, Any]]) -> None:
@@ -381,6 +451,7 @@ class HakanbanData:
             "order": (max(orders) + ORDER_STEP) if orders else 0,
             "archived": False,
             "auto_archive_days": None,
+            "done": _looks_done(title),
         }
         board["columns"].append(column)
         return column
@@ -405,6 +476,10 @@ class HakanbanData:
             column["auto_archive_days"] = int(days) if days and int(days) > 0 else None
             # Apply the new rule straight away, inside this same undo step.
             self._archive_cards(self._auto_archive_candidates(column_ids={column_id}))
+        if "done" in changes and changes["done"] is not None:
+            column["done"] = bool(changes["done"])
+            # Completes / reopens cards to match, inside this same undo step.
+            self._sync_board_completion(board)
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "column_updated"})
         return column
 
@@ -488,8 +563,8 @@ class HakanbanData:
             "labels": list(fields.get("labels", [])),
             "assignees": list(fields.get("assignees", [])),
             "due": fields.get("due"),
-            "due_complete": fields.get("due_complete", False),
-            "status": fields.get("status", STATUS_NEEDS_ACTION),
+            "due_complete": False,
+            "status": STATUS_NEEDS_ACTION,
             "checklists": [],
             "comments": [],
             "cover": fields.get("cover"),
@@ -498,6 +573,11 @@ class HakanbanData:
             "updated": now,
             "column_entered": now,
         }
+        if self._done_columns(board):
+            completed = self._column_is_done(board, column_id)
+        else:
+            completed = fields.get("status") == STATUS_COMPLETED
+        self._set_completion(card, completed, now)
         self.cards[card_id] = card
         return card
 
@@ -535,8 +615,15 @@ class HakanbanData:
     @_undoable
     def update_card(self, card_id: str, **fields: Any) -> dict[str, Any]:
         card = self._require_card(card_id)
-        was_completed = card.get("status") == STATUS_COMPLETED
         was_archived = bool(card.get("archived"))
+        if fields.get("status") is not None:
+            if fields["status"] not in (STATUS_COMPLETED, STATUS_NEEDS_ACTION):
+                raise HakanbanError(f"Unknown status {fields['status']}")
+            want_done: bool | None = fields["status"] == STATUS_COMPLETED
+        elif fields.get("due_complete") is not None:
+            want_done = bool(fields["due_complete"])  # legacy alias for completing
+        else:
+            want_done = None
 
         # Type / epic changes are validated before anything is written.
         new_type = fields.get("card_type") or card.get("card_type", CARD_TYPE_TASK)
@@ -554,10 +641,7 @@ class HakanbanData:
         card["card_type"] = new_type
         card["epic_id"] = new_epic
 
-        for key in (
-            "title", "description", "labels", "assignees",
-            "due_complete", "status", "archived",
-        ):
+        for key in ("title", "description", "labels", "assignees", "archived"):
             if key in fields and fields[key] is not None:
                 card[key] = fields[key]
         # These can be explicitly cleared with null.
@@ -569,13 +653,29 @@ class HakanbanData:
             # Restored: restart the column clock so auto-archive doesn't grab it again.
             card["column_entered"] = card["updated"]
 
-        now_completed = card.get("status") == STATUS_COMPLETED
-        event = EVENT_CARD_UPDATED
-        if now_completed and not was_completed:
-            card["completed"] = _now()
-            event = EVENT_CARD_COMPLETED
-        elif not now_completed and was_completed:
-            card.pop("completed", None)
+        board = self._require_board(card["board_id"])
+        if self._done_columns(board):
+            # Completing / reopening moves the card to match; otherwise (e.g. a restore)
+            # the status just follows whatever list the card is in.
+            in_done = self._column_is_done(board, card["column_id"])
+            target = None
+            if want_done is True and not in_done:
+                target = self._done_columns(board)[0]
+            elif want_done is False and in_done and self._open_columns(board):
+                target = self._open_columns(board)[0]
+            if target is not None:
+                from_column = card["column_id"]
+                self._place_card(card, target["id"])
+                self.hass.bus.async_fire(
+                    EVENT_CARD_MOVED,
+                    {"board_id": card["board_id"], "card_id": card_id,
+                     "from_column": from_column, "to_column": target["id"]},
+                )
+            completed = self._column_is_done(board, card["column_id"])
+        else:
+            completed = want_done if want_done is not None else card.get("status") == STATUS_COMPLETED
+        newly = self._set_completion(card, completed)
+        event = EVENT_CARD_COMPLETED if newly else EVENT_CARD_UPDATED
         self._commit(
             card["board_id"], event,
             {"board_id": card["board_id"], "column_id": card["column_id"], "card_id": card_id},
@@ -602,18 +702,12 @@ class HakanbanData:
             if card.get("card_type") == CARD_TYPE_EPIC:
                 self._unlink_epic_children(card_id)
         card["board_id"] = board_id
-        card["column_id"] = to_column
-
-        siblings = [c for c in self.cards_in_column(to_column) if c["id"] != card_id]
-        if position is None or position >= len(siblings):
-            position = len(siblings)
-        position = max(0, position)
-        siblings.insert(position, card)
-        for idx, sib in enumerate(siblings):
-            sib["order"] = idx * ORDER_STEP
-        card["updated"] = _now()
-        if to_column != from_column:
-            card["column_entered"] = card["updated"]
+        self._place_card(card, to_column, position)
+        if self._done_columns(board) and self._set_completion(card, self._column_is_done(board, to_column)):
+            self.hass.bus.async_fire(
+                EVENT_CARD_COMPLETED,
+                {"board_id": board_id, "column_id": to_column, "card_id": card_id},
+            )
 
         self._commit(
             board_id, EVENT_CARD_MOVED,
@@ -625,6 +719,21 @@ class HakanbanData:
             },
         )
         return card
+
+    def _place_card(self, card: dict[str, Any], to_column: str, position: int | None = None) -> None:
+        """Put ``card`` into ``to_column`` at ``position`` (default: the end) and reorder."""
+        from_column = card["column_id"]
+        card["column_id"] = to_column
+        siblings = [c for c in self.cards_in_column(to_column) if c["id"] != card["id"]]
+        if position is None or position >= len(siblings):
+            position = len(siblings)
+        position = max(0, position)
+        siblings.insert(position, card)
+        for idx, sib in enumerate(siblings):
+            sib["order"] = idx * ORDER_STEP
+        card["updated"] = _now()
+        if to_column != from_column:
+            card["column_entered"] = card["updated"]
 
     @_undoable
     def delete_card(self, card_id: str) -> None:

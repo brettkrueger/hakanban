@@ -207,6 +207,13 @@ export function openColumnSettings(board, column, api) {
       <div class="hk-row"><input type="text" id="hk-cs-title" style="flex:1" maxlength="120" value="${escapeHtml(column.title)}"></div>
     </div>
     <div class="hk-section">
+      <h3>Completion</h3>
+      <label class="hk-row"><input type="checkbox" id="hk-cs-done" ${column.done ? "checked" : ""}> Cards in this list are done</label>
+      <p class="hk-muted">Moving a card into a done list completes it and records when; moving it out
+        reopens it. Completing a card from Home Assistant (e.g. ticking it in a to-do list) moves it
+        to the first done list.</p>
+    </div>
+    <div class="hk-section">
       <h3>Automatic archival</h3>
       <div class="hk-row">
         <label class="hk-row"><input type="checkbox" id="hk-cs-auto" ${days ? "checked" : ""}> Archive cards after</label>
@@ -230,6 +237,14 @@ export function openColumnSettings(board, column, api) {
     const changes = {};
     const title = root.getElementById("hk-cs-title").value.trim();
     if (title && title !== column.title) changes.title = title;
+    const done = root.getElementById("hk-cs-done").checked;
+    if (done !== !!column.done) {
+      const count = (column.cards || []).length;
+      if (count && !confirm(done
+        ? `Mark the ${count} card(s) in "${column.title}" as completed?`
+        : `Reopen the ${count} completed card(s) in "${column.title}"?`)) return;
+      changes.done = done;
+    }
     const n = auto.checked ? Math.max(1, parseInt(dayInput.value, 10) || 0) : 0;
     if ((column.auto_archive_days || 0) !== n) {
       const count = (column.cards || []).length;

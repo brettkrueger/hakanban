@@ -381,6 +381,93 @@ def run():
           legacy.boards["b"]["label_defs"][0]["color"] == "#838c91"
           and legacy.boards["b"]["background"] is None)
 
+    # ---- done lists: status follows the list
+    dh = FakeHass()
+    dm = data.HakanbanData(dh, FakeStore())
+    db = dm.create_board("Done test", seed=True)
+    dbid = db["id"]
+    d_todo, d_doing, d_done = (c["id"] for c in db["columns"])
+    check("seeded 'Done' list is a done list",
+          [c.get("done") for c in db["columns"]] == [False, False, True])
+    completed_events = lambda: len([e for e in dh.bus.events if e[0] == "hakanban_card_completed"])
+    t1 = dm.create_card(dbid, d_todo, "Task")
+    check("new card in open list is open", t1["status"] == "needs_action" and "completed" not in t1)
+    n0 = completed_events()
+    dm.move_card(t1["id"], d_done)
+    check("moving into done list completes + stamps time",
+          t1["status"] == "completed" and t1["completed"] == "2026-06-16T12:00:00+00:00"
+          and t1["due_complete"] is True)
+    check("moving into done list fires completed event", completed_events() == n0 + 1)
+    dm.move_card(t1["id"], d_done, position=0)
+    check("reordering inside done list doesn't re-fire", completed_events() == n0 + 1)
+    dm.move_card(t1["id"], d_doing)
+    check("moving out of done list reopens + clears stamp",
+          t1["status"] == "needs_action" and "completed" not in t1 and t1["due_complete"] is False)
+    dm.update_card(t1["id"], status="completed")
+    check("completing elsewhere (HA to-do / service) moves to done list",
+          t1["column_id"] == d_done and t1["status"] == "completed")
+    dm.update_card(t1["id"], status="needs_action")
+    check("reopening moves to the first open list",
+          t1["column_id"] == d_todo and t1["status"] == "needs_action")
+    dm.update_card(t1["id"], due_complete=True)
+    check("legacy due_complete=true completes", t1["column_id"] == d_done and t1["status"] == "completed")
+    dm.update_card(t1["id"], title="Renamed", status="completed")
+    check("update with unchanged status doesn't move", t1["column_id"] == d_done and t1["title"] == "Renamed")
+    t2 = dm.create_card(dbid, d_done, "Born done")
+    check("card created in done list starts completed", t2["status"] == "completed" and "completed" in t2)
+    t3 = dm.create_card(dbid, d_todo, "Status ignored", status="completed")
+    check("status follows list on create", t3["status"] == "needs_action")
+    dm.move_card(t3["id"], d_doing)
+    dm.update_column(dbid, d_doing, done=True)
+    check("flagging a list done completes its cards", t3["status"] == "completed" and "completed" in t3)
+    t4 = dm.create_card(dbid, d_todo, "Second done list")
+    dm.move_card(t4["id"], d_doing)
+    check("second done list also completes", t4["status"] == "completed")
+    dm.update_column(dbid, d_done, done=False)
+    check("unflagging a done list reopens its cards",
+          t1["status"] == "needs_action" and t2["status"] == "needs_action" and t3["status"] == "completed")
+    dm.undo()
+    check("undo restores done flag + statuses",
+          dm._column(dm.boards[dbid], d_done)["done"] is True and dm.cards[t1["id"]]["status"] == "completed")
+    renamed = dm.create_column(dbid, "done ")
+    check("new list titled 'done' defaults to done", renamed["done"] is True)
+    other = dm.create_column(dbid, "Later")
+    check("other new lists are not done", other["done"] is False)
+
+    # No done list: status is set directly and nothing moves.
+    nb = dm.create_board("Free", seed=False)
+    nbid = nb["id"]
+    ncol = dm.create_column(nbid, "Stuff")["id"]
+    nc = dm.create_card(nbid, ncol, "Free card")
+    dm.update_card(nc["id"], status="completed")
+    check("board without done list: status set in place",
+          nc["column_id"] == ncol and nc["status"] == "completed" and "completed" in nc)
+
+    # Migration: cards already in a "Done" list get completed with their entry time;
+    # completed cards elsewhere move into it.
+    mig = data.HakanbanData(FakeHass(), FakeStore())
+    mig._data = {
+        "boards": {"b": {"id": "b", "title": "M", "card_seq": 2, "label_defs": [], "columns": [
+            {"id": "o", "title": "To Do", "order": 0},
+            {"id": "d", "title": "Done", "order": 1000},
+        ]}},
+        "cards": {
+            "x": {"id": "x", "board_id": "b", "column_id": "d", "order": 0, "number": 1, "title": "In done",
+                  "status": "needs_action", "due_complete": True,
+                  "column_entered": "2026-05-01T10:00:00+00:00"},
+            "y": {"id": "y", "board_id": "b", "column_id": "o", "order": 0, "number": 2, "title": "Ticked",
+                  "status": "completed", "completed": "2026-05-02T10:00:00+00:00"},
+        },
+    }
+    mig._normalize()
+    check("migration: 'Done' list flagged", mig.boards["b"]["columns"][1]["done"] is True
+          and mig.boards["b"]["columns"][0]["done"] is False)
+    check("migration: card in Done completed at its entry time",
+          mig.cards["x"]["status"] == "completed" and mig.cards["x"]["completed"] == "2026-05-01T10:00:00+00:00")
+    check("migration: completed card elsewhere moved into Done, stamp kept",
+          mig.cards["y"]["column_id"] == "d" and mig.cards["y"]["completed"] == "2026-05-02T10:00:00+00:00"
+          and mig.cards["y"]["order"] > mig.cards["x"]["order"])
+
     failed = [n for n, ok in RESULTS if not ok]
     print()
     print(f"{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

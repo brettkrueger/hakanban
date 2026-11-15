@@ -20,7 +20,7 @@ function makeSeed() {
     columns: [
       { id: "c1", title: "To Do", order: 0, archived: false, cards: [] },
       { id: "c2", title: "Doing", order: 1000, archived: false, cards: [] },
-      { id: "c3", title: "Done", order: 2000, archived: false, cards: [] },
+      { id: "c3", title: "Done", order: 2000, archived: false, done: true, cards: [] },
     ],
   };
   let n = 0;
@@ -57,8 +57,11 @@ function makeSeed() {
     mk("c3", "Remove old cabinets", { status: "completed", epic_id: epic.id }),
     mk("c3", "Old archived thing", { status: "completed", archived: true }),
   ];
-  // normalise order
-  board.columns.forEach((col) => col.cards.forEach((cd, i) => (cd.order = i * 1000)));
+  // normalise order; cards in the done list are completed (like the real migration)
+  board.columns.forEach((col) => col.cards.forEach((cd, i) => {
+    cd.order = i * 1000;
+    if (col.done) { cd.status = "completed"; cd.completed = "2026-11-14T18:30:00Z"; }
+  }));
   return { boards: [board] };
 }
 
@@ -98,6 +101,20 @@ function notify() {
 function reindex(cards) {
   cards.forEach((c, i) => (c.order = i * 1000));
 }
+// Mirror HakanbanData's done lists: status follows the list on boards that have one.
+function setCompletion(card, done) {
+  const was = card.status === "completed";
+  card.due_complete = done;
+  if (done && !was) { card.status = "completed"; card.completed = new Date().toISOString(); }
+  if (!done && was) { card.status = "needs_action"; delete card.completed; }
+}
+function doneCols(board) {
+  return board.columns.filter((c) => c.done && !c.archived);
+}
+function syncCard(board, card) {
+  if (!doneCols(board).length) return;
+  setCompletion(card, !!board.columns.find((c) => c.id === card.column_id)?.done);
+}
 
 const handlers = {
   get: () => payload(),
@@ -123,9 +140,14 @@ const handlers = {
     b.columns.push(col);
     return col;
   },
-  update_column: ({ board_id, column_id, title, auto_archive_days }) => {
-    const col = findBoard(board_id).columns.find((c) => c.id === column_id);
+  update_column: ({ board_id, column_id, title, auto_archive_days, done }) => {
+    const board = findBoard(board_id);
+    const col = board.columns.find((c) => c.id === column_id);
     if (title != null) col.title = title;
+    if (done !== undefined) {
+      col.done = done;
+      board.columns.forEach((c) => c.cards.forEach((cd) => !cd.archived && syncCard(board, cd)));
+    }
     if (auto_archive_days !== undefined) col.auto_archive_days = auto_archive_days || null;
     return col;
   },
@@ -153,15 +175,30 @@ const handlers = {
       status: "needs_action", checklists: [], comments: [], cover: null, archived: false,
     };
     col.cards.push(card);
+    syncCard(b, card);
     return card;
   },
   paste_cards: ({ board_id, column_id, titles }) => {
     const cards = (titles || []).map((t) => handlers.create_card({ board_id, column_id, title: t }));
     return { cards };
   },
-  update_card: ({ card_id, ...fields }) => {
-    const [, , card] = findCard(card_id);
+  update_card: ({ card_id, status, due_complete, ...fields }) => {
+    const [board, col, card] = findCard(card_id);
     Object.assign(card, fields);
+    if (status !== undefined) {
+      const dc = doneCols(board);
+      if (!dc.length) setCompletion(card, status === "completed");
+      else if ((status === "completed") !== !!col.done) {
+        const target = status === "completed" ? dc[0] : board.columns.find((c) => !c.done && !c.archived);
+        if (target) {
+          col.cards = col.cards.filter((c) => c.id !== card_id);
+          target.cards.push(card);
+          card.column_id = target.id;
+          reindex(target.cards);
+        }
+        syncCard(board, card);
+      }
+    }
     if (fields.card_type === "task") allCards().forEach(([, , c]) => { if (c.epic_id === card_id) c.epic_id = null; });
     if (fields.card_type === "epic") card.epic_id = null;
     return card;
@@ -175,6 +212,7 @@ const handlers = {
     toCol.cards.splice(pos, 0, card);
     card.column_id = to_column;
     reindex(toCol.cards);
+    syncCard(board, card);
     return card;
   },
   delete_card: ({ card_id }) => {
