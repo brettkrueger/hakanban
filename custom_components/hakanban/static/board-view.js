@@ -3,7 +3,7 @@
 
 import { STYLES } from "./styles.js";
 import { HakanbanCardDetail } from "./card-detail.js";
-import { openColumnSettings } from "./dialogs.js";
+import { openColumnSettings, openNewCardDialog } from "./dialogs.js";
 import {
   escapeHtml,
   formatDue,
@@ -13,10 +13,12 @@ import {
   cardMatchesFilter,
   boardCards,
   epicProgress,
+  swimlanes,
+  swimlaneChanges,
 } from "./util.js";
 
 // Module-level drag state (HTML5 DnD can't read dataTransfer during dragover).
-let DRAG = null; // { kind: 'card'|'col', id, from? }
+let DRAG = null; // { kind: 'card'|'col', id, from?, lane? }
 
 function cardAfter(container, y) {
   const els = [...container.querySelectorAll(".hk-card:not(.dragging)")];
@@ -30,7 +32,7 @@ function cardAfter(container, y) {
 }
 
 function colInsertionIndex(boardEl, x) {
-  const cols = [...boardEl.querySelectorAll(".hk-col")];
+  const cols = [...boardEl.querySelectorAll(".hk-col[data-colhead-box]")];
   for (let i = 0; i < cols.length; i++) {
     const box = cols[i].getBoundingClientRect();
     if (x < box.left + box.width / 2) return i;
@@ -47,6 +49,8 @@ export class HakanbanBoard extends HTMLElement {
     this._filter = emptyFilter();
     this._openCardId = null;
     this._modal = null;
+    this._lanes = "none";
+    this._collapsed = new Set(); // "<mode>:<lane key>"
   }
 
   set api(api) {
@@ -58,6 +62,16 @@ export class HakanbanBoard extends HTMLElement {
   set filter(f) {
     this._filter = { ...emptyFilter(), ...(f || {}) };
     this.render();
+  }
+  // Swimlane grouping: "none" | "type" | "epic" | "label" | "status".
+  set swimlanes(mode) {
+    const m = mode || "none";
+    if (m === this._lanes) return;
+    this._lanes = m;
+    this.render();
+  }
+  get swimlanes() {
+    return this._lanes;
   }
   set board(b) {
     this._board = b;
@@ -123,6 +137,7 @@ export class HakanbanBoard extends HTMLElement {
     const cards = (col.cards || []).filter((c) => this._cardVisible(c));
     const cardsHtml = cards.map((c) => this._cardHtml(c, labelById, cardById)).join("");
     const composerOpen = this._composer.openCol === col.id;
+    const quick = `<button class="hk-btn secondary hk-quickadd" data-open="${col.id}" title="Quick add: title only (paste several lines for several cards)">⚡</button>`;
     const footer = composerOpen
       ? `<div class="hk-composer">
            <textarea data-composer="${col.id}" placeholder="Enter a title… (paste multiple lines for multiple cards)"></textarea>
@@ -131,20 +146,64 @@ export class HakanbanBoard extends HTMLElement {
              <button class="hk-btn secondary" data-cancel="${col.id}">✕</button>
            </div>
          </div>`
-      : `<div class="hk-composer"><button class="hk-btn secondary hk-addcard" data-open="${col.id}">+ Add a card</button></div>`;
+      : `<div class="hk-composer hk-addrow"><button class="hk-btn secondary hk-addcard" data-newcard="${col.id}">+ Add a card</button>${quick}</div>`;
 
     return `
-      <div class="hk-col" data-col="${col.id}">
-        <div class="hk-col-head" draggable="true" data-colhead="${col.id}">
-          <span class="hk-col-title" data-coltitle="${col.id}">${escapeHtml(col.title)}</span>
-          ${col.auto_archive_days ? `<span class="hk-col-auto" title="Cards are archived after ${col.auto_archive_days} day(s) in this list">🗄 ${col.auto_archive_days}d</span>` : ""}
-          <span class="hk-col-count">${cards.length}</span>
-          <button class="hk-col-menu" data-colsettings="${col.id}" title="List settings">⚙</button>
-          <button class="hk-col-menu" data-colmenu="${col.id}" title="Delete list">🗑</button>
-        </div>
+      <div class="hk-col" data-col="${col.id}" data-dropcol="${col.id}" data-colhead-box>
+        ${this._colHeadHtml(col, cards.length)}
         <div class="hk-cards" data-cards="${col.id}">${cardsHtml}</div>
         ${footer}
       </div>`;
+  }
+
+  _colHeadHtml(col, count) {
+    return `
+        <div class="hk-col-head" draggable="true" data-colhead="${col.id}">
+          <span class="hk-col-title" data-coltitle="${col.id}">${escapeHtml(col.title)}</span>
+          ${col.auto_archive_days ? `<span class="hk-col-auto" title="Cards are archived after ${col.auto_archive_days} day(s) in this list">🗄 ${col.auto_archive_days}d</span>` : ""}
+          <span class="hk-col-count">${count}</span>
+          <button class="hk-col-menu" data-colsettings="${col.id}" title="List settings">⚙</button>
+          <button class="hk-col-menu" data-colmenu="${col.id}" title="Delete list">🗑</button>
+        </div>`;
+  }
+
+  // Swimlane layout: one header row of lists, then a horizontal lane per group, each with a
+  // cell per list. Lanes are a view only; dragging a card into another lane edits the field
+  // the board is grouped by (type, epic, label or status).
+  _lanesHtml(lanes, labelById, cardById, addCol) {
+    const b = this._board;
+    const visible = (col) => (col.cards || []).filter((c) => this._cardVisible(c));
+    const heads = (b.columns || [])
+      .map((col) => `<div class="hk-col hk-col-headonly" data-col="${col.id}" data-colhead-box>${this._colHeadHtml(col, visible(col).length)}</div>`)
+      .join("");
+    const rows = lanes
+      .map((lane) => {
+        const ck = `${this._lanes}:${lane.key}`;
+        const collapsed = this._collapsed.has(ck);
+        const perCol = (b.columns || []).map((col) => visible(col).filter(lane.match));
+        const count = perCol.reduce((n, cs) => n + cs.length, 0);
+        const dot = lane.color
+          ? `<span class="hk-lane-dot" style="background:${lane.color}"></span>`
+          : lane.epic ? `<span class="hk-epic-tag" style="margin:0">EPIC</span>` : "";
+        const cells = (b.columns || [])
+          .map((col, i) => `
+            <div class="hk-lane-cell" data-dropcol="${col.id}" data-lane="${escapeHtml(lane.key)}">
+              <div class="hk-cards" data-cards="${col.id}">${perCol[i].map((c) => this._cardHtml(c, labelById, cardById)).join("")}</div>
+              <button class="hk-btn secondary hk-lane-add" data-newcard="${col.id}" data-lane="${escapeHtml(lane.key)}" title="Add a card to ${escapeHtml(col.title)} / ${escapeHtml(lane.title)}">+</button>
+            </div>`)
+          .join("");
+        return `
+          <div class="hk-lane ${collapsed ? "collapsed" : ""}">
+            <button class="hk-lane-head" data-lanetoggle="${escapeHtml(ck)}" aria-expanded="${!collapsed}">
+              <span class="hk-lane-caret">${collapsed ? "▸" : "▾"}</span>${dot}
+              <span class="hk-lane-title">${escapeHtml(lane.title)}</span>
+              <span class="hk-col-count">${count}</span>
+            </button>
+            ${collapsed ? "" : `<div class="hk-lane-row">${cells}</div>`}
+          </div>`;
+      })
+      .join("");
+    return `<div class="hk-lanes"><div class="hk-lane-headrow">${heads}${addCol}</div>${rows}</div>`;
   }
 
   render() {
@@ -155,7 +214,7 @@ export class HakanbanBoard extends HTMLElement {
     const b = this._board;
     const labelById = Object.fromEntries((b.labels || []).map((l) => [l.id, l]));
     const cardById = Object.fromEntries(boardCards(b).map((c) => [c.id, c]));
-    const cols = (b.columns || []).map((c) => this._columnHtml(c, labelById, cardById)).join("");
+    const lanes = swimlanes(b, this._lanes);
     const addCol = this._addCol.open
       ? `<div class="hk-add-col"><div class="hk-composer"><textarea data-addcol placeholder="List title…"></textarea>
            <div class="hk-composer-actions"><button class="hk-btn" data-addcol-go>Add list</button>
@@ -163,8 +222,11 @@ export class HakanbanBoard extends HTMLElement {
       : `<div class="hk-add-col"><button data-addcol-open>+ Add a list</button></div>`;
 
     const bg = b.background ? `style="background:${escapeHtml(b.background)}"` : "";
+    const inner = lanes
+      ? this._lanesHtml(lanes, labelById, cardById, addCol)
+      : (b.columns || []).map((c) => this._columnHtml(c, labelById, cardById)).join("") + addCol;
     this.shadowRoot.innerHTML = `<style>${STYLES}</style>
-      <div class="hk-board" data-board ${bg}>${cols}${addCol}</div>`;
+      <div class="hk-board ${lanes ? "lanes" : ""}" data-board ${bg}>${inner}</div>`;
 
     this._wire();
     this._restoreComposer();
@@ -200,7 +262,10 @@ export class HakanbanBoard extends HTMLElement {
         this._openCard(el.dataset.card);
       });
       el.addEventListener("dragstart", (e) => {
-        DRAG = { kind: "card", id: el.dataset.card, from: el.dataset.col };
+        DRAG = {
+          kind: "card", id: el.dataset.card, from: el.dataset.col,
+          lane: el.closest("[data-lane]")?.dataset.lane ?? null,
+        };
         el.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", el.dataset.card);
@@ -214,8 +279,8 @@ export class HakanbanBoard extends HTMLElement {
     });
 
     // --- card drop targets (each column's card list) ---
-    root.querySelectorAll(".hk-col").forEach((colEl) => {
-      const colId = colEl.dataset.col;
+    root.querySelectorAll("[data-dropcol]").forEach((colEl) => {
+      const colId = colEl.dataset.dropcol;
       const list = colEl.querySelector(".hk-cards");
       colEl.addEventListener("dragover", (e) => {
         if (DRAG?.kind !== "card") return;
@@ -227,12 +292,7 @@ export class HakanbanBoard extends HTMLElement {
         if (DRAG?.kind !== "card") return;
         e.preventDefault();
         colEl.classList.remove("dragover");
-        const after = cardAfter(list, e.clientY);
-        const ids = [...list.querySelectorAll(".hk-card")]
-          .map((n) => n.dataset.card)
-          .filter((id) => id !== DRAG.id);
-        const position = after ? ids.indexOf(after.dataset.card) : ids.length;
-        api.moveCard(DRAG.id, colId, position < 0 ? ids.length : position);
+        this._dropCard({ ...DRAG }, colId, list, e.clientY, colEl.dataset.lane ?? null);
       });
     });
 
@@ -284,7 +344,21 @@ export class HakanbanBoard extends HTMLElement {
       })
     );
 
-    // --- card composer ---
+    // --- swimlane collapse ---
+    root.querySelectorAll("[data-lanetoggle]").forEach((el) =>
+      el.addEventListener("click", () => {
+        const k = el.dataset.lanetoggle;
+        this._collapsed.has(k) ? this._collapsed.delete(k) : this._collapsed.add(k);
+        this.render();
+      })
+    );
+
+    // --- new card dialog ---
+    root.querySelectorAll("[data-newcard]").forEach((btn) =>
+      btn.addEventListener("click", () => this._newCard(btn.dataset.newcard, btn.dataset.lane))
+    );
+
+    // --- card composer (quick add) ---
     root.querySelectorAll("[data-open]").forEach((btn) =>
       btn.addEventListener("click", () => {
         this._composer = { openCol: btn.dataset.open, value: "" };
@@ -327,6 +401,43 @@ export class HakanbanBoard extends HTMLElement {
     if (go) go.addEventListener("click", () => this._submitColumn(root.querySelector("textarea[data-addcol]").value));
     const cancel = root.querySelector("[data-addcol-cancel]");
     if (cancel) cancel.addEventListener("click", () => { this._addCol = { open: false, value: "" }; this.render(); });
+  }
+
+  // Drop a card into list `colId` (and lane `toLane` in swimlane mode). `position` is the
+  // index among the list's *full* card order, so it stays right when a filter or a lane hides
+  // some cards: land just before the card under the cursor, else just after the last visible one.
+  _dropCard(drag, colId, list, y, toLane) {
+    const col = (this._board.columns || []).find((c) => c.id === colId);
+    if (!col) return;
+    let changes = null;
+    if (toLane !== null && drag.lane !== null) {
+      const card = this._findCard(drag.id);
+      changes = card ? swimlaneChanges(this._lanes, card, drag.lane, toLane) : null;
+      if (changes?.error) { alert(changes.error); return; }
+      if (changes?.card_type === "task" && card.card_type === "epic" &&
+          boardCards(this._board).some((c) => c.epic_id === card.id) &&
+          !confirm(`Turn epic "${card.title}" into a task? Its cards will be removed from the epic.`)) return;
+    }
+    const full = (col.cards || []).map((c) => c.id).filter((id) => id !== drag.id);
+    const shown = [...list.querySelectorAll(".hk-card")].map((n) => n.dataset.card).filter((id) => id !== drag.id);
+    const after = cardAfter(list, y);
+    let position;
+    if (after) position = full.indexOf(after.dataset.card);
+    else if (shown.length) position = full.indexOf(shown[shown.length - 1]) + 1;
+    else position = full.length;
+    if (position < 0) position = full.length;
+    const original = (col.cards || []).map((c) => c.id);
+    const unmoved = drag.from === colId && original.indexOf(drag.id) === position;
+    if (!unmoved) this._api.moveCard(drag.id, colId, position);
+    if (changes) this._api.updateCard(drag.id, changes);
+  }
+
+  _newCard(colId, laneKey) {
+    const lane = laneKey != null ? (swimlanes(this._board, this._lanes) || []).find((l) => l.key === laneKey) : null;
+    openNewCardDialog(() => this._board, colId, this._api, {
+      ...(lane?.preset || {}),
+      onOpenCard: (id) => this._openCard(id),
+    });
   }
 
   _submitCards(colId, value) {

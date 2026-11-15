@@ -43,6 +43,10 @@ export const STYLES = `
   font-size: .9rem; white-space: nowrap;
 }
 .hk-tab.active { background: rgba(255,255,255,.38); font-weight: 600; }
+.hk-toolbar select.hk-lanes-sel {
+  padding: 5px 6px; border-radius: 6px; border: 0; max-width: 150px;
+  background: rgba(255,255,255,.9); color: #172b4d; font: inherit; font-size: .85rem; cursor: pointer;
+}
 .hk-toolbar input.hk-search {
   padding: 6px 10px; border-radius: 6px; border: 0; min-width: 160px;
   background: rgba(255,255,255,.9); color: #172b4d;
@@ -153,6 +157,47 @@ export const STYLES = `
 .hk-check-item { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
 .hk-check-item.done span { text-decoration: line-through; color: var(--hk-subtle); }
 .hk-muted { color: var(--hk-subtle); font-size: .8rem; }
+
+/* ---- new card dialog ---- */
+.hk-nc-grid { display: flex; gap: 0 24px; flex-wrap: wrap; }
+.hk-nc-grid .hk-section { margin: 8px 0; }
+.hk-nc-input {
+  width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; font: inherit; font-size: 1.05rem;
+  border: 1px solid var(--hk-divider); background: var(--hk-col-bg); color: var(--hk-text);
+}
+.hk-nc-input.invalid { border-color: #eb5a46; outline: 1px solid #eb5a46; }
+.hk-nc-checks { min-height: 60px; }
+.hk-req { color: #eb5a46; }
+.hk-nc-error { color: #eb5a46; font-size: .85rem; margin-top: 8px; }
+.hk-addrow { display: flex; gap: 4px; }
+.hk-addrow .hk-addcard { flex: 1; }
+
+/* ---- swimlanes ---- */
+.hk-board.lanes { display: block; overflow: auto; }
+.hk-lanes { display: flex; flex-direction: column; gap: 10px; width: max-content; min-width: 100%; }
+.hk-lane-headrow { display: flex; gap: var(--hk-gap); align-items: flex-start; position: sticky; top: -16px; z-index: 2; padding-top: 0; }
+.hk-col-headonly { max-height: none; }
+.hk-lane { display: flex; flex-direction: column; gap: 6px; }
+.hk-lane-head {
+  position: sticky; left: 0; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--hk-col-bg); color: var(--hk-text); border: 0; border-radius: 8px; padding: 6px 12px;
+  font: inherit; font-weight: 600; font-size: .9rem; cursor: pointer; box-shadow: 0 1px 2px rgba(9,30,66,.18);
+}
+.hk-lane-caret { color: var(--hk-subtle); width: 1em; }
+.hk-lane-dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+.hk-lane-title { max-width: 40ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hk-lane-row { display: flex; gap: var(--hk-gap); align-items: stretch; }
+.hk-lane-cell {
+  flex: 0 0 290px; display: flex; flex-direction: column; min-height: 48px;
+  background: var(--hk-col-bg); border-radius: var(--hk-radius); opacity: .97;
+}
+.hk-lane-cell.dragover { outline: 2px dashed var(--hk-accent); outline-offset: -2px; }
+.hk-lane-cell .hk-cards { padding-top: 8px; overflow: visible; }
+.hk-lane-add { align-self: stretch; text-align: left; padding: 2px 10px 6px; opacity: 0; transition: opacity .1s; }
+.hk-lane-cell:hover .hk-lane-add, .hk-lane-add:focus { opacity: 1; }
+@media (hover: none) { .hk-lane-add { opacity: 1; } }
+.hk-board.lanes .hk-add-col { flex: 0 0 290px; }
+.hk-quickadd { padding: 6px 8px; }
 
 /* ---- toolbar badge (active filter count) ---- */
 .hk-iconbtn { position: relative; }

@@ -154,3 +154,90 @@ export function epicProgress(board, epicId) {
   const kids = epicChildren(board, epicId);
   return { done: kids.filter((c) => c.status === "completed").length, total: kids.length };
 }
+
+// ---------------------------------------------------------------- swimlanes
+export const SWIMLANE_MODES = [
+  ["none", "No swimlanes"],
+  ["type", "Type"],
+  ["epic", "Epic"],
+  ["label", "Label"],
+  ["status", "Status"],
+];
+
+// Lanes for a grouping mode. Each lane: { key, title, color?, match(card), preset }.
+// `preset` pre-fills the new-card dialog when adding a card from inside that lane.
+// A card may match several label lanes (it has several labels); every other mode is exclusive.
+export function swimlanes(board, mode) {
+  if (!board || !mode || mode === "none") return null;
+  if (mode === "type") {
+    return [
+      { key: "epic", title: "Epics", match: (c) => c.card_type === "epic", preset: { cardType: "epic" } },
+      { key: "task", title: "Tasks", match: (c) => c.card_type !== "epic", preset: { cardType: "task" } },
+    ];
+  }
+  if (mode === "status") {
+    return [
+      { key: "needs_action", title: "Open", match: (c) => c.status !== "completed", preset: {} },
+      { key: "completed", title: "Done", match: (c) => c.status === "completed", preset: {} },
+    ];
+  }
+  if (mode === "epic") {
+    const epics = boardEpics(board);
+    const ids = new Set(epics.map((e) => e.id));
+    return [
+      ...epics.map((e) => ({
+        key: e.id,
+        title: `#${e.number} ${e.title}`,
+        epic: true,
+        // The epic card sits in its own lane alongside its children.
+        match: (c) => c.id === e.id || c.epic_id === e.id,
+        preset: { epicId: e.id },
+      })),
+      {
+        key: "__none",
+        title: "No epic",
+        match: (c) => c.card_type !== "epic" && !(c.epic_id && ids.has(c.epic_id)),
+        preset: {},
+      },
+    ];
+  }
+  if (mode === "label") {
+    const ids = new Set((board.labels || []).map((l) => l.id));
+    return [
+      ...(board.labels || []).map((l) => ({
+        key: l.id,
+        title: l.name || "(unnamed label)",
+        color: l.color,
+        match: (c) => (c.labels || []).includes(l.id),
+        preset: { labels: [l.id] },
+      })),
+      {
+        key: "__none",
+        title: "No label",
+        match: (c) => !(c.labels || []).some((id) => ids.has(id)),
+        preset: {},
+      },
+    ];
+  }
+  return null;
+}
+
+// What dragging `card` from lane `from` to lane `to` changes, as an update_card payload.
+// Returns null when nothing changes, or { error } when the move isn't allowed.
+export function swimlaneChanges(mode, card, from, to) {
+  if (!mode || mode === "none" || from === to || from == null || to == null) return null;
+  if (mode === "type") return { card_type: to };
+  if (mode === "status") return { status: to };
+  if (mode === "epic") {
+    if (card.card_type === "epic") return { error: "An epic stays in its own lane." };
+    return { epic_id: to === "__none" ? null : to };
+  }
+  if (mode === "label") {
+    if (to === "__none") return { labels: [] };
+    const labels = new Set(card.labels || []);
+    if (from !== "__none") labels.delete(from);
+    labels.add(to);
+    return { labels: [...labels] };
+  }
+  return null;
+}

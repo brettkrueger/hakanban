@@ -142,14 +142,14 @@ const handlers = {
     b.columns.forEach((c, i) => (c.order = i * 1000));
     return { ok: true };
   },
-  create_card: ({ board_id, column_id, title, description, labels, card_type, epic_id }) => {
+  create_card: ({ board_id, column_id, title, description, labels, due, card_type, epic_id }) => {
     const b = findBoard(board_id);
     const col = b.columns.find((c) => c.id === column_id);
     const card = {
       id: uid(), board_id, column_id, order: col.cards.length * 1000,
       number: allCards().length + 1, card_type: card_type || "task", epic_id: epic_id || null,
       title, description: description || "",
-      labels: labels || [], assignees: [], due: null, due_complete: false,
+      labels: labels || [], assignees: [], due: due || null, due_complete: false,
       status: "needs_action", checklists: [], comments: [], cover: null, archived: false,
     };
     col.cards.push(card);

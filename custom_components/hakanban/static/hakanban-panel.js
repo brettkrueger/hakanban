@@ -4,10 +4,18 @@ import { STYLES } from "./styles.js";
 import { HakanbanApi } from "./api.js";
 import {
   escapeHtml, contrastText, debounce, formatDue,
-  emptyFilter, activeFilterCount, boardEpics,
+  emptyFilter, activeFilterCount, boardEpics, SWIMLANE_MODES,
 } from "./util.js";
 import { openDialog, openLabelManager, colorInputHtml, wireColorInput } from "./dialogs.js";
 import "./board-view.js";
+
+// Swimlane grouping is a per-viewer preference, remembered per board in this browser.
+function loadLanes(boardId) {
+  try { return localStorage.getItem(`hakanban_lanes_${boardId}`) || "none"; } catch (e) { return "none"; }
+}
+function saveLanes(boardId, mode) {
+  try { localStorage.setItem(`hakanban_lanes_${boardId}`, mode); } catch (e) { /* storage blocked */ }
+}
 
 const BACKGROUNDS = [
   "", "#0079bf", "#519839", "#b04632", "#89609e", "#cd5a91",
@@ -130,6 +138,12 @@ export class HakanbanPanel extends HTMLElement {
       <button class="hk-iconbtn" id="redo-btn" title="Redo (Ctrl/⌘+Shift+Z)" ${canRedo ? "" : "disabled"}>↷</button>
       <input class="hk-search" id="search" type="search" placeholder="Search cards…" value="${escapeHtml(this._filter.query)}">
       <button class="hk-iconbtn ${this._showFilter ? "on" : ""}" id="filter-btn" title="Filter cards">⚑${nFilters ? `<span class="hk-count">${nFilters}</span>` : ""}</button>
+      <select class="hk-lanes-sel" id="lanes-sel" title="Swimlanes: group cards into rows">
+        ${SWIMLANE_MODES.map(([v, t]) => {
+          const cur = this._activeBoardId ? loadLanes(this._activeBoardId) : "none";
+          return `<option value="${v}" ${v === cur ? "selected" : ""}>${v === "none" ? "☰ " + t : "☰ Lanes: " + t}</option>`;
+        }).join("")}
+      </select>
       <button class="hk-iconbtn" id="labels-btn" title="Edit labels">🏷</button>
       <button class="hk-iconbtn" id="archive-btn" title="Archived cards">🗄${nArchived ? `<span class="hk-count" style="background:#838c91">${nArchived}</span>` : ""}</button>
       <button class="hk-iconbtn" id="bg-btn" title="Board background">🎨</button>
@@ -171,6 +185,11 @@ export class HakanbanPanel extends HTMLElement {
       this._showBg = false;
       this._renderFilterbar();
       this._applyFilter();
+    });
+    tb.querySelector("#lanes-sel").addEventListener("change", (e) => {
+      if (!this._activeBoardId) return;
+      saveLanes(this._activeBoardId, e.target.value);
+      if (this._boardEl) this._boardEl.swimlanes = e.target.value;
     });
     tb.querySelector("#labels-btn").addEventListener("click", () => {
       if (this._activeBoard()) openLabelManager(() => this._activeBoard(), this._api);
@@ -379,6 +398,7 @@ export class HakanbanPanel extends HTMLElement {
       this._boardEl.board = null;
       return;
     }
+    this._boardEl.swimlanes = loadLanes(board.id);
     this._boardEl.filter = this._filter;
     this._boardEl.board = board;
   }

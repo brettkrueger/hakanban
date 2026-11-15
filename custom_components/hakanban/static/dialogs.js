@@ -3,7 +3,7 @@
 // board re-render from a live push never wipes it out.
 
 import { STYLES } from "./styles.js";
-import { escapeHtml, contrastText, boardCards, normalizeHex } from "./util.js";
+import { escapeHtml, contrastText, boardCards, boardEpics, normalizeHex } from "./util.js";
 
 export const PALETTE = [
   "#61bd4f", "#f2d600", "#ff9f1a", "#eb5a46", "#c377e0",
@@ -11,7 +11,8 @@ export const PALETTE = [
 ];
 
 // Mount a dialog shell. Returns { root, close } where root is the shadow root.
-export function openDialog(title, bodyHtml, { width = 460 } = {}) {
+// `beforeClose()` may return false to keep the dialog open on Escape / backdrop click.
+export function openDialog(title, bodyHtml, { width = 460, beforeClose = null } = {}) {
   const host = document.createElement("div");
   host.className = "hakanban-dialog-host";
   const root = host.attachShadow({ mode: "open" });
@@ -27,12 +28,15 @@ export function openDialog(title, bodyHtml, { width = 460 } = {}) {
     host.remove();
     window.removeEventListener("keydown", onKey, true);
   };
+  const dismiss = () => {
+    if (!beforeClose || beforeClose() !== false) close();
+  };
   const onKey = (e) => {
-    if (e.key === "Escape") { e.stopPropagation(); close(); }
+    if (e.key === "Escape") { e.stopPropagation(); dismiss(); }
   };
   window.addEventListener("keydown", onKey, true);
   root.querySelector(".hk-modal-back").addEventListener("mousedown", (e) => {
-    if (e.target.classList.contains("hk-modal-back")) close();
+    if (e.target.classList.contains("hk-modal-back")) dismiss();
   });
   return { root, close };
 }
@@ -242,4 +246,189 @@ export function openColumnSettings(board, column, api) {
     i.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); })
   );
   root.getElementById("hk-cs-title").focus();
+}
+
+// ---------------------------------------------------------------- new card
+// Jira/Trello-style "create issue" form: fill in the whole ticket, then create it in one go.
+// getBoard() returns the current board payload (labels/lists/epics can change while open).
+// onOpenCard(id), if given, enables "Create & open" to jump into the full card view.
+export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, cardType = "task", epicId = "", labels = [] } = {}) {
+  const state = {
+    columnId,
+    cardType,
+    epicId,
+    labels: new Set(labels),
+    another: false,
+  };
+  const dirty = () =>
+    ["hk-nc-title", "hk-nc-desc", "hk-nc-checks"].some((id) => (root.getElementById(id)?.value || "").trim());
+  const { root, close } = openDialog("New card", `<div id="hk-nc"></div>`, {
+    width: 620,
+    beforeClose: () => !dirty() || confirm("Discard this card?"),
+  });
+
+  const labelChips = (board) =>
+    (board.labels || [])
+      .map((l) => `<span class="hk-label-chip ${state.labels.has(l.id) ? "selected" : ""}" data-nc-label="${l.id}"
+          style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`)
+      .join("") || `<span class="hk-muted">No labels on this board yet.</span>`;
+
+  const epicOptions = (board) => {
+    const epics = boardEpics(board);
+    if (!epics.length) return `<option value="">No epics on this board</option>`;
+    return `<option value="">None</option>` + epics
+      .map((e) => `<option value="${e.id}" ${e.id === state.epicId ? "selected" : ""}>#${e.number} ${escapeHtml(e.title)}</option>`)
+      .join("");
+  };
+
+  const render = () => {
+    const board = getBoard();
+    if (!board) { close(); return; }
+    if (!board.columns.some((c) => c.id === state.columnId)) state.columnId = board.columns[0]?.id;
+    const isEpic = state.cardType === "epic";
+    root.getElementById("hk-nc").innerHTML = `
+      <div class="hk-nc-grid">
+        <div class="hk-section">
+          <h3>Type</h3>
+          <div class="hk-seg">
+            <button data-nc-type="task" class="${isEpic ? "" : "on"}">Task</button>
+            <button data-nc-type="epic" class="${isEpic ? "on" : ""}">Epic</button>
+          </div>
+        </div>
+        <div class="hk-section">
+          <h3>List</h3>
+          <div class="hk-row"><select id="hk-nc-col">${board.columns
+            .map((c) => `<option value="${c.id}" ${c.id === state.columnId ? "selected" : ""}>${escapeHtml(c.title)}</option>`)
+            .join("")}</select></div>
+        </div>
+        ${isEpic ? "" : `<div class="hk-section">
+          <h3>Epic</h3>
+          <div class="hk-row"><select id="hk-nc-epic">${epicOptions(board)}</select></div>
+        </div>`}
+      </div>
+      <div class="hk-section">
+        <h3>Title <span class="hk-req">*</span></h3>
+        <input type="text" id="hk-nc-title" class="hk-nc-input" maxlength="500" placeholder="${isEpic ? "What's the epic?" : "What needs doing?"}">
+      </div>
+      <div class="hk-section">
+        <h3>Labels</h3>
+        <div class="hk-label-row" id="hk-nc-labels">${labelChips(board)}</div>
+      </div>
+      <div class="hk-section">
+        <h3>Due date</h3>
+        <div class="hk-row"><input type="datetime-local" id="hk-nc-due"></div>
+      </div>
+      <div class="hk-section">
+        <h3>Description</h3>
+        <textarea class="hk-desc-edit" id="hk-nc-desc" placeholder="Add a more detailed description… (Markdown supported)"></textarea>
+      </div>
+      <div class="hk-section">
+        <h3>Checklist</h3>
+        <textarea class="hk-desc-edit hk-nc-checks" id="hk-nc-checks" placeholder="One item per line (optional)"></textarea>
+      </div>
+      <div class="hk-nc-error" id="hk-nc-error" hidden></div>
+      <div class="hk-modal-actions">
+        <label class="hk-row grow hk-muted"><input type="checkbox" id="hk-nc-another" ${state.another ? "checked" : ""}> Create another</label>
+        <button class="hk-btn secondary" id="hk-nc-cancel">Cancel</button>
+        ${onOpenCard ? `<button class="hk-btn secondary" id="hk-nc-open" title="Create, then open the full card">Create &amp; open</button>` : ""}
+        <button class="hk-btn" id="hk-nc-create" title="Ctrl+Enter">Create</button>
+      </div>`;
+    wire();
+  };
+
+  // Re-render the type-dependent parts without losing what has been typed.
+  const rerenderKeepingInput = () => {
+    const keep = Object.fromEntries(
+      ["hk-nc-title", "hk-nc-due", "hk-nc-desc", "hk-nc-checks"].map((id) => [id, root.getElementById(id).value])
+    );
+    render();
+    for (const [id, v] of Object.entries(keep)) root.getElementById(id).value = v;
+    root.getElementById("hk-nc-title").focus();
+  };
+
+  let busy = false;
+  const submit = async (openAfter = false) => {
+    if (busy) return;
+    const titleEl = root.getElementById("hk-nc-title");
+    const title = titleEl.value.trim();
+    const err = root.getElementById("hk-nc-error");
+    if (!title) {
+      titleEl.classList.add("invalid");
+      titleEl.focus();
+      return;
+    }
+    const board = getBoard();
+    const extra = { card_type: state.cardType };
+    const desc = root.getElementById("hk-nc-desc").value.trim();
+    if (desc) extra.description = desc;
+    const labels = [...state.labels].filter((id) => (board.labels || []).some((l) => l.id === id));
+    if (labels.length) extra.labels = labels;
+    const due = root.getElementById("hk-nc-due").value;
+    if (due) extra.due = due + ":00";
+    if (state.cardType !== "epic" && state.epicId) extra.epic_id = state.epicId;
+    const checks = root.getElementById("hk-nc-checks").value.split("\n").map((l) => l.trim()).filter(Boolean);
+
+    busy = true;
+    root.querySelectorAll(".hk-modal-actions button").forEach((b) => (b.disabled = true));
+    err.hidden = true;
+    try {
+      const card = await api.createCard(board.id, state.columnId, title, extra);
+      if (checks.length && card?.id) {
+        const cl = await api.addChecklist(card.id, "Checklist");
+        for (const text of checks) await api.addCheckItem(card.id, cl.id, text);
+      }
+      if (openAfter && card?.id) {
+        close();
+        onOpenCard(card.id);
+      } else if (state.another) {
+        // Keep type / list / epic / labels for rapid entry of related cards.
+        render();
+        root.getElementById("hk-nc-title").focus();
+      } else {
+        close();
+      }
+    } catch (e) {
+      err.textContent = e?.message || String(e);
+      err.hidden = false;
+    } finally {
+      busy = false;
+      root.querySelectorAll(".hk-modal-actions button").forEach((b) => (b.disabled = false));
+    }
+  };
+
+  const wire = () => {
+    root.querySelectorAll("[data-nc-type]").forEach((b) =>
+      b.addEventListener("click", () => {
+        if (state.cardType === b.dataset.ncType) return;
+        state.cardType = b.dataset.ncType;
+        rerenderKeepingInput();
+      })
+    );
+    root.getElementById("hk-nc-col").addEventListener("change", (e) => (state.columnId = e.target.value));
+    root.getElementById("hk-nc-epic")?.addEventListener("change", (e) => (state.epicId = e.target.value));
+    root.querySelectorAll("[data-nc-label]").forEach((chip) =>
+      chip.addEventListener("click", () => {
+        const id = chip.dataset.ncLabel;
+        state.labels.has(id) ? state.labels.delete(id) : state.labels.add(id);
+        chip.classList.toggle("selected", state.labels.has(id));
+      })
+    );
+    root.getElementById("hk-nc-another").addEventListener("change", (e) => (state.another = e.target.checked));
+    const titleEl = root.getElementById("hk-nc-title");
+    titleEl.addEventListener("input", () => titleEl.classList.remove("invalid"));
+    titleEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); submit(); }
+    });
+    root.getElementById("hk-nc").addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submit(); }
+    });
+    root.getElementById("hk-nc-cancel").addEventListener("click", () => {
+      if (!dirty() || confirm("Discard this card?")) close();
+    });
+    root.getElementById("hk-nc-open")?.addEventListener("click", () => submit(true));
+    root.getElementById("hk-nc-create").addEventListener("click", () => submit());
+  };
+
+  render();
+  root.getElementById("hk-nc-title").focus();
 }

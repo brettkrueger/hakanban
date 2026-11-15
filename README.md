@@ -44,6 +44,19 @@ v1 ships the **Core + multi-line paste** scope:
   progress bar (completed children / total) on the board; child cards show their epic's name.
   From an epic, add new cards to it, pull in existing cards, or open a child. Filter the board
   down to one epic.
+- **New card dialog** — **+ Add a card** opens a Jira/Trello-style form so the whole ticket
+  is filled in before it's created: type, list, epic, title, labels, due date, markdown
+  description and an optional checklist (one item per line). **Create another** keeps the
+  dialog open for quick entry of related cards; **Create & open** jumps into the full card.
+  `Enter` in the title or `Ctrl`/`⌘`+`Enter` anywhere creates it. The **⚡** button next to it
+  keeps the old title-only quick add (including multi-line paste).
+- **Swimlanes** — the toolbar's **☰ Lanes** menu splits the board into horizontal rows by
+  **type**, **epic**, **label** or **status**. Each lane has a cell per list; collapse a lane
+  by clicking its header. Dragging a card into another lane changes that field (e.g. drop it in
+  the *Bug* lane to swap its label to *Bug*, or into an epic's lane to add it to the epic), and
+  the **+** in a lane cell opens the new card dialog pre-filled for that lane. A card with
+  several labels shows in each of its label lanes. The choice is remembered per board in your
+  browser.
 - **Board backgrounds** — preset colours and gradients from the 🎨 bar, or any custom
   colour via the colour picker / hex field.
 - **Automatic archival** — in a list's ⚙ settings, archive cards after *N* days in that
@@ -54,7 +67,7 @@ v1 ships the **Core + multi-line paste** scope:
   board's native HA **`calendar` entity**, so dated tasks appear in Home Assistant's Calendar
   panel and dashboard card.
 - **Comments / activity** on a card.
-- **Multi-line paste → many cards** — paste newline-separated text into the composer and get
+- **Multi-line paste → many cards** — paste newline-separated text into the ⚡ quick add and get
   one card per non-empty line, created in order in a single batched call.
 - **Search** across cards.
 - **Undo / redo** — store-wide history with toolbar buttons and `Ctrl`/`⌘`+`Z` /
@@ -95,13 +108,14 @@ The **Hakanban** item now appears in your sidebar.
 Open the **Hakanban** panel from the sidebar:
 
 - **Create a board**, then add **columns** (lists) to it.
-- **Add cards** to a column with the composer. Open a card to edit its **markdown
-  description**, attach **labels**, set a **due date**, and leave **comments**.
+- **Add cards** with **+ Add a card**, which opens the new card dialog. Open a card later to
+  edit its **markdown description**, **labels**, **due date**, checklists and **comments**.
 - **Drag** cards within a column, between columns, and **reorder** columns by dragging their
   headers.
-- **Bulk-create:** paste a multi-line block (e.g. a shopping list) into the card composer —
+- **Bulk-create:** paste a multi-line block (e.g. a shopping list) into the ⚡ quick add —
   each non-empty line becomes its own card, in order.
 - **Filter by label** and **search** to find cards quickly.
+- **Swimlanes:** pick a grouping from **☰ Lanes** in the toolbar.
 
 ### Embeddable Lovelace card
 
@@ -111,6 +125,7 @@ integration** — you do **not** need to add a Lovelace resource manually.
 ```yaml
 type: custom:hakanban-card
 board: <board_id>      # the id of the board to embed
+swimlanes: label       # optional: type | epic | label | status
 ```
 
 ---
