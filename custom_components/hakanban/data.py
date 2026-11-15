@@ -15,6 +15,7 @@ The todo entities and the websocket API are thin readers/writers on top of this.
 from __future__ import annotations
 
 import copy
+import datetime
 import functools
 import re
 from typing import Any, Callable, TypeVar
@@ -25,6 +26,9 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import uuid as uuid_util
 
 from .const import (
+    CARD_TYPE_EPIC,
+    CARD_TYPE_TASK,
+    CARD_TYPES,
     DEFAULT_LABELS,
     EVENT_BOARD_CHANGED,
     EVENT_CARD_COMPLETED,
@@ -49,6 +53,19 @@ def _uid() -> str:
 
 def _now() -> str:
     return dt_util.utcnow().isoformat()
+
+
+def _parse_ts(value: Any) -> datetime.datetime | None:
+    """Parse a stored ISO timestamp; naive values are treated as UTC."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
 
 
 def _undoable(method: Callable[..., _T]) -> Callable[..., _T]:
@@ -96,6 +113,7 @@ class HakanbanData:
     # ------------------------------------------------------------------ load
     async def async_load(self) -> None:
         self._data = await self._store.async_load()
+        self._normalize()
         if not self._data["boards"]:
             # First run: seed a starter board so the panel isn't empty.
             self.create_board("My Board", seed=True)
@@ -129,6 +147,16 @@ class HakanbanData:
         self._data = self._redo_stack.pop()
         self._commit(None, EVENT_BOARD_CHANGED, {"action": "redo"})
         return True
+
+    def _normalize(self) -> None:
+        """Back-fill fields added after v0.1.8 so older stores load cleanly."""
+        for board in self.boards.values():
+            for col in board.get("columns", []):
+                col.setdefault("auto_archive_days", None)
+        for card in self.cards.values():
+            card.setdefault("card_type", CARD_TYPE_TASK)
+            card.setdefault("epic_id", None)
+            card.setdefault("column_entered", card.get("updated") or card.get("created") or _now())
 
     async def async_save_now(self) -> None:
         await self._store.async_save(self._data)
@@ -226,6 +254,13 @@ class HakanbanData:
             "columns": [
                 {**col, "cards": self.cards_in_column(col["id"])} for col in columns
             ],
+            # Archived cards (newest first) so the panel can list / restore them and
+            # epics can still count their archived children.
+            "archived_cards": sorted(
+                (c for c in self.cards.values() if c["board_id"] == board_id and c.get("archived")),
+                key=lambda c: c.get("updated", ""),
+                reverse=True,
+            ),
         }
 
     def full_payload(self) -> dict[str, Any]:
@@ -304,6 +339,7 @@ class HakanbanData:
             "title": title or "New list",
             "order": (max(orders) + ORDER_STEP) if orders else 0,
             "archived": False,
+            "auto_archive_days": None,
         }
         board["columns"].append(column)
         return column
@@ -322,6 +358,12 @@ class HakanbanData:
         for key in ("title", "archived"):
             if key in changes and changes[key] is not None:
                 column[key] = changes[key]
+        if "auto_archive_days" in changes:
+            days = changes["auto_archive_days"]
+            # 0 / None / negative all mean "off".
+            column["auto_archive_days"] = int(days) if days and int(days) > 0 else None
+            # Apply the new rule straight away, inside this same undo step.
+            self._archive_cards(self._auto_archive_candidates(column_ids={column_id}))
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "column_updated"})
         return column
 
@@ -330,6 +372,7 @@ class HakanbanData:
         board = self._require_board(board_id)
         column = self._column(board, column_id)
         for card_id in [cid for cid, c in self.cards.items() if c["column_id"] == column_id]:
+            self._unlink_epic_children(card_id)
             del self.cards[card_id]
         board["columns"].remove(column)
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "column_deleted"})
@@ -347,17 +390,58 @@ class HakanbanData:
         self._commit(board_id, EVENT_BOARD_CHANGED, {"board_id": board_id, "action": "column_moved"})
 
     # ----------------------------------------------------------------- cards
+    def _validate_epic_link(self, card: dict[str, Any] | None, board_id: str, epic_id: str | None) -> None:
+        """Raise unless ``epic_id`` is a usable parent for ``card`` on ``board_id``."""
+        if epic_id is None:
+            return
+        epic = self.cards.get(epic_id)
+        if epic is None or epic.get("card_type") != CARD_TYPE_EPIC:
+            raise HakanbanError(f"Card {epic_id} is not an epic")
+        if epic["board_id"] != board_id:
+            raise HakanbanError("An epic can only contain cards from its own board")
+        if card is not None:
+            if card["id"] == epic_id:
+                raise HakanbanError("A card cannot be its own epic")
+            if card.get("card_type") == CARD_TYPE_EPIC:
+                raise HakanbanError("Epics cannot be nested inside other epics")
+
+    def _unlink_epic_children(self, epic_id: str) -> None:
+        """Detach every card that points at ``epic_id`` (epic deleted / demoted / moved)."""
+        for card in self.cards.values():
+            if card.get("epic_id") == epic_id:
+                card["epic_id"] = None
+
+    def epic_children(self, epic_id: str, include_archived: bool = True) -> list[dict[str, Any]]:
+        """Cards belonging to an epic, sorted by card number."""
+        children = [
+            c for c in self.cards.values()
+            if c.get("epic_id") == epic_id and (include_archived or not c.get("archived"))
+        ]
+        children.sort(key=lambda c: c.get("number", 0))
+        return children
+
     def _new_card(self, board: dict[str, Any], column_id: str, title: str, **fields: Any) -> dict[str, Any]:
+        card_type = fields.get("card_type") or CARD_TYPE_TASK
+        if card_type not in CARD_TYPES:
+            raise HakanbanError(f"Unknown card type {card_type}")
+        epic_id = fields.get("epic_id")
+        if card_type == CARD_TYPE_EPIC and epic_id:
+            raise HakanbanError("Epics cannot be nested inside other epics")
+        self._validate_epic_link(None, board["id"], epic_id)
+
         board["card_seq"] = board.get("card_seq", 0) + 1
         existing = self.cards_in_column(column_id)
         order = (existing[-1]["order"] + ORDER_STEP) if existing else 0
         card_id = _uid()
+        now = _now()
         card = {
             "id": card_id,
             "board_id": board["id"],
             "column_id": column_id,
             "order": order,
             "number": board["card_seq"],
+            "card_type": card_type,
+            "epic_id": epic_id,
             "title": title.strip() or "Untitled",
             "description": fields.get("description", ""),
             "labels": list(fields.get("labels", [])),
@@ -369,8 +453,9 @@ class HakanbanData:
             "comments": [],
             "cover": fields.get("cover"),
             "archived": False,
-            "created": _now(),
-            "updated": _now(),
+            "created": now,
+            "updated": now,
+            "column_entered": now,
         }
         self.cards[card_id] = card
         return card
@@ -410,13 +495,38 @@ class HakanbanData:
     def update_card(self, card_id: str, **fields: Any) -> dict[str, Any]:
         card = self._require_card(card_id)
         was_completed = card.get("status") == STATUS_COMPLETED
+        was_archived = bool(card.get("archived"))
+
+        # Type / epic changes are validated before anything is written.
+        new_type = fields.get("card_type") or card.get("card_type", CARD_TYPE_TASK)
+        if new_type not in CARD_TYPES:
+            raise HakanbanError(f"Unknown card type {new_type}")
+        new_epic = fields["epic_id"] if "epic_id" in fields else card.get("epic_id")
+        if new_type == CARD_TYPE_EPIC:
+            if "epic_id" in fields and fields["epic_id"]:
+                raise HakanbanError("Epics cannot be nested inside other epics")
+            new_epic = None
+        if new_epic is not None:
+            self._validate_epic_link({**card, "card_type": new_type}, card["board_id"], new_epic)
+        if card.get("card_type", CARD_TYPE_TASK) == CARD_TYPE_EPIC and new_type != CARD_TYPE_EPIC:
+            self._unlink_epic_children(card_id)  # demoted: its children become free cards
+        card["card_type"] = new_type
+        card["epic_id"] = new_epic
+
         for key in (
-            "title", "description", "labels", "assignees", "due",
-            "due_complete", "status", "cover", "archived",
+            "title", "description", "labels", "assignees",
+            "due_complete", "status", "archived",
         ):
             if key in fields and fields[key] is not None:
                 card[key] = fields[key]
+        # These can be explicitly cleared with null.
+        for key in ("due", "cover"):
+            if key in fields:
+                card[key] = fields[key]
         card["updated"] = _now()
+        if was_archived and not card.get("archived"):
+            # Restored: restart the column clock so auto-archive doesn't grab it again.
+            card["column_entered"] = card["updated"]
 
         now_completed = card.get("status") == STATUS_COMPLETED
         event = EVENT_CARD_UPDATED
@@ -445,6 +555,11 @@ class HakanbanData:
         board = self._require_board(board_id)
         self._column(board, to_column)  # validate target exists
 
+        if board_id != card["board_id"]:
+            # Epic links never cross boards.
+            card["epic_id"] = None
+            if card.get("card_type") == CARD_TYPE_EPIC:
+                self._unlink_epic_children(card_id)
         card["board_id"] = board_id
         card["column_id"] = to_column
 
@@ -456,6 +571,8 @@ class HakanbanData:
         for idx, sib in enumerate(siblings):
             sib["order"] = idx * ORDER_STEP
         card["updated"] = _now()
+        if to_column != from_column:
+            card["column_entered"] = card["updated"]
 
         self._commit(
             board_id, EVENT_CARD_MOVED,
@@ -472,11 +589,70 @@ class HakanbanData:
     def delete_card(self, card_id: str) -> None:
         card = self._require_card(card_id)
         board_id = card["board_id"]
+        self._unlink_epic_children(card_id)
         del self.cards[card_id]
         self._commit(
             board_id, EVENT_CARD_DELETED,
             {"board_id": board_id, "card_id": card_id},
         )
+
+    # ---------------------------------------------------------- auto-archive
+    def _auto_archive_candidates(
+        self,
+        now: datetime.datetime | None = None,
+        column_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Cards that have sat in an auto-archiving column for at least its N days."""
+        now = now or dt_util.utcnow()
+        out: list[dict[str, Any]] = []
+        for board in self.boards.values():
+            if board.get("archived"):
+                continue
+            for col in board["columns"]:
+                days = col.get("auto_archive_days")
+                if not days or col.get("archived"):
+                    continue
+                if column_ids is not None and col["id"] not in column_ids:
+                    continue
+                cutoff = now - datetime.timedelta(days=days)
+                for card in self.cards_in_column(col["id"]):
+                    entered = _parse_ts(card.get("column_entered") or card.get("updated"))
+                    if entered is not None and entered <= cutoff:
+                        out.append(card)
+        return out
+
+    def _archive_cards(self, cards: list[dict[str, Any]]) -> None:
+        """Archive ``cards`` in place and fire one updated event per card (no commit)."""
+        now = _now()
+        for card in cards:
+            card["archived"] = True
+            card["updated"] = now
+            self.hass.bus.async_fire(
+                EVENT_CARD_UPDATED,
+                {
+                    "board_id": card["board_id"],
+                    "column_id": card["column_id"],
+                    "card_id": card["id"],
+                    "action": "auto_archived",
+                },
+            )
+
+    def auto_archive(self, now: datetime.datetime | None = None) -> list[dict[str, Any]]:
+        """Run the auto-archive sweep. Returns the cards archived (often none).
+
+        A sweep that finds nothing touches nothing — no save, no undo entry — so the
+        periodic timer doesn't flood the undo history.
+        """
+        candidates = self._auto_archive_candidates(now)
+        if candidates:
+            self._apply_auto_archive(candidates)
+        return candidates
+
+    @_undoable
+    def _apply_auto_archive(self, cards: list[dict[str, Any]]) -> None:
+        # The snapshot was taken before these card dicts were mutated, so undo restores them.
+        self._archive_cards(cards)
+        self._commit(None)
 
     # ---------------------------------------------------------------- labels
     @_undoable

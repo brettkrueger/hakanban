@@ -17,7 +17,8 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
         { "id": "<label_id>", "name": "Bug", "color": "#eb5a46" }
       ],
       "columns": [
-        { "id": "<column_id>", "title": "To Do", "order": 0, "archived": false }
+        { "id": "<column_id>", "title": "To Do", "order": 0, "archived": false,
+          "auto_archive_days": null }   // int N: archive cards after N days in this list
       ],
       "card_seq": 12,                  // monotonic per-board card number counter
       "created": "<iso8601>"
@@ -30,6 +31,8 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       "column_id": "<column_id>",
       "order": 2000,                   // sparse integer order within the column
       "number": 7,                     // human card number (#7), unique per board
+      "card_type": "task",             // "task" | "epic"
+      "epic_id": null,                 // id of an epic card on the same board, or null
       "title": "Buy milk",
       "description": "",               // markdown
       "labels": ["<label_id>", ...],
@@ -45,11 +48,15 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       "cover": null,
       "archived": false,
       "created": "<iso8601>",
-      "updated": "<iso8601>"
+      "updated": "<iso8601>",
+      "column_entered": "<iso8601>"    // when the card entered its column (or was restored)
     }
   }
 }
 ```
+
+Fields added after v0.1.8 (`card_type`, `epic_id`, `column_entered`, `auto_archive_days`) are
+back-filled on load, so older stores need no migration.
 
 `status` deliberately mirrors `todo.TodoItemStatus` so each card maps 1:1 onto a todo item.
 
@@ -65,7 +72,8 @@ The frontend never sees the raw store. It gets boards with columns→cards **nes
       { "id", "title", "order", "archived",
         "cards": [ { ...full card... } ]   // sorted by order, archived excluded
       }
-    ]
+    ],
+    "archived_cards": [ { ...full card... } ]  // this board's archived cards, newest first
   } ],
   "can_undo": true,   // is there a mutation to undo?  (store-wide history)
   "can_redo": false   // is there an undone mutation to redo?
@@ -92,12 +100,12 @@ optimistic update and reconcile on the next push.
 | `hakanban/update_board` | `board_id`, `title?`, `background?`, `archived?` | board |
 | `hakanban/delete_board` | `board_id` | `{deleted: board_id}` |
 | `hakanban/create_column` | `board_id`, `title` | column |
-| `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?` | column |
+| `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?`, `auto_archive_days?` (int ≥ 0; 0/null = off) | column |
 | `hakanban/delete_column` | `board_id`, `column_id` | `{deleted: column_id}` |
 | `hakanban/move_column` | `board_id`, `column_id`, `position` (int) | `{ok: true}` |
-| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?` | card |
+| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?` | card |
 | `hakanban/paste_cards` | `board_id`, `column_id`, `text` (newline-separated) **or** `titles[]` | `{cards:[…]}` |
-| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/due_complete/status/cover/archived` | card |
+| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/due_complete/status/cover/archived/card_type/epic_id` (`due`, `cover`, `epic_id` accept `null` to clear) | card |
 | `hakanban/move_card` | `card_id`, `to_column`, `position?` (int), `to_board?` | card |
 | `hakanban/delete_card` | `card_id` | `{deleted: card_id}` |
 | `hakanban/create_label` | `board_id`, `name`, `color` | label |
@@ -118,12 +126,38 @@ Undo/redo is **store-wide** and snapshot-based: every mutation (from the panel, 
 action can be reverted regardless of which client made it. A new mutation clears the redo stack;
 history is capped at `UNDO_HISTORY_LIMIT` (50) states and reset to empty on load.
 
+The card's type field is `card_type`, not `type`, because `type` is the websocket message's
+own command key.
+
+### Epics
+
+A card with `card_type: "epic"` groups other cards on the **same board** through their
+`epic_id`. Rules enforced by `HakanbanData` (violations raise `HakanbanError`):
+
+* `epic_id` must point at an epic on the same board; a card can't be its own epic and epics
+  don't nest (an epic's `epic_id` is always `null`).
+* Demoting an epic to a task, deleting it, or moving it to another board unlinks its
+  children. Moving a child to another board clears its `epic_id`.
+
+Epic progress is derived in the frontend: children = cards whose `epic_id` is the epic,
+excluding archived cards that were never completed; done = `status == "completed"`.
+
+### Automatic archival
+
+A column with `auto_archive_days: N` archives every card that has been in it for at least N
+days, measured from `column_entered` (set on create, on a move into a different column, and
+on restore from the archive). The sweep runs on setup and then every
+`AUTO_ARCHIVE_INTERVAL_MINUTES` (60). Setting the rule also applies it at once, in the same
+undo step. A sweep that archives cards is one undo step; an empty sweep changes nothing
+(no save, no undo entry). Each archived card fires `hakanban_card_updated` with
+`action: "auto_archived"`.
+
 ## HA bus events (for automations)
 
 | event | data |
 |-------|------|
 | `hakanban_card_created` | `board_id`, `column_id`, `card_id`, `title` |
-| `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` |
+| `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` (`comment_added`, `auto_archived`) |
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_deleted` | `board_id`, `card_id` |
@@ -131,8 +165,9 @@ history is capped at `UNDO_HISTORY_LIMIT` (50) states and reset to empty on load
 
 ## Services (`hakanban.*`)
 
-`add_card` (board_id, column_id, title, description?, labels?, due?), `move_card`
-(card_id, to_column, position?), `update_card` (card_id, …), `add_comment` (card_id, text),
+`add_card` (board_id, column_id, title, description?, labels?, due?, card_type?, epic_id?),
+`move_card` (card_id, to_column, position?), `update_card` (card_id, title?, description?,
+labels?, due?, status?, archived?, card_type?, epic_id?), `add_comment` (card_id, text),
 `create_board` (title), `create_column` (board_id, title). Plus the native `todo.*` services on
 each column entity (Assist / voice).
 

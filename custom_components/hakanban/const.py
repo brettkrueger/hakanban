@@ -37,6 +37,14 @@ DEFAULT_LABELS: Final = [
 STATUS_NEEDS_ACTION: Final = "needs_action"
 STATUS_COMPLETED: Final = "completed"
 
+# Card types. An epic groups other cards on the same board via their ``epic_id``.
+CARD_TYPE_TASK: Final = "task"
+CARD_TYPE_EPIC: Final = "epic"
+CARD_TYPES: Final = (CARD_TYPE_TASK, CARD_TYPE_EPIC)
+
+# Automatic archival: how often the per-column "archive after N days" sweep runs.
+AUTO_ARCHIVE_INTERVAL_MINUTES: Final = 60
+
 # Event types fired on hass.bus
 EVENT_CARD_CREATED: Final = f"{DOMAIN}_card_created"
 EVENT_CARD_UPDATED: Final = f"{DOMAIN}_card_updated"

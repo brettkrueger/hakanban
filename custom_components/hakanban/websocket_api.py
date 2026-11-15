@@ -14,7 +14,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import DATA_MANAGER, DOMAIN, SIGNAL_BOARDS_UPDATED
+from .const import CARD_TYPES, DATA_MANAGER, DOMAIN, SIGNAL_BOARDS_UPDATED
 from .data import HakanbanData, HakanbanError
 
 
@@ -147,14 +147,13 @@ def ws_create_column(hass, connection, msg, manager: HakanbanData):
         vol.Required("column_id"): str,
         vol.Optional("title"): str,
         vol.Optional("archived"): bool,
+        vol.Optional("auto_archive_days"): vol.Any(None, vol.All(int, vol.Range(min=0))),
     }
 )
 @_guard
 def ws_update_column(hass, connection, msg, manager: HakanbanData):
-    return manager.update_column(
-        msg["board_id"], msg["column_id"],
-        title=msg.get("title"), archived=msg.get("archived"),
-    )
+    changes = {k: msg[k] for k in ("title", "archived", "auto_archive_days") if k in msg}
+    return manager.update_column(msg["board_id"], msg["column_id"], **changes)
 
 
 @websocket_api.websocket_command(
@@ -194,6 +193,8 @@ def ws_move_column(hass, connection, msg, manager: HakanbanData):
         vol.Optional("description"): str,
         vol.Optional("labels"): [str],
         vol.Optional("due"): vol.Any(str, None),
+        vol.Optional("card_type"): vol.In(CARD_TYPES),
+        vol.Optional("epic_id"): vol.Any(str, None),
     }
 )
 @_guard
@@ -203,6 +204,8 @@ def ws_create_card(hass, connection, msg, manager: HakanbanData):
         description=msg.get("description", ""),
         labels=msg.get("labels", []),
         due=msg.get("due"),
+        card_type=msg.get("card_type"),
+        epic_id=msg.get("epic_id"),
     )
 
 
@@ -235,6 +238,8 @@ def ws_paste_cards(hass, connection, msg, manager: HakanbanData):
         vol.Optional("status"): vol.In(["needs_action", "completed"]),
         vol.Optional("cover"): vol.Any(str, None),
         vol.Optional("archived"): bool,
+        vol.Optional("card_type"): vol.In(CARD_TYPES),
+        vol.Optional("epic_id"): vol.Any(str, None),
     }
 )
 @_guard

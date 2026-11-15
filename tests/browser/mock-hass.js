@@ -30,6 +30,8 @@ function makeSeed() {
     column_id: col,
     order: 0,
     number: ++n,
+    card_type: extra.card_type || "task",
+    epic_id: extra.epic_id || null,
     title,
     description: extra.description || "",
     labels: extra.labels || [],
@@ -40,14 +42,21 @@ function makeSeed() {
     checklists: [],
     comments: [],
     cover: null,
-    archived: false,
+    archived: !!extra.archived,
+    updated: "2026-06-15T10:00:00",
   });
+  const epic = mk("c2", "Kitchen renovation", { card_type: "epic", labels: ["blue"] });
   board.columns[0].cards = [
     mk("c1", "Buy milk", { labels: ["green"] }),
     mk("c1", "Walk the dog", { due: "2026-06-10T09:00:00", labels: ["red"] }),
+    mk("c1", "Pick tiles", { epic_id: epic.id, labels: ["green", "red"] }),
   ];
-  board.columns[1].cards = [mk("c2", "Write the report", { description: "**Important** task" })];
-  board.columns[2].cards = [mk("c3", "Ship it", { status: "completed" })];
+  board.columns[1].cards = [epic, mk("c2", "Write the report", { description: "**Important** task" })];
+  board.columns[2].cards = [
+    mk("c3", "Ship it", { status: "completed" }),
+    mk("c3", "Remove old cabinets", { status: "completed", epic_id: epic.id }),
+    mk("c3", "Old archived thing", { status: "completed", archived: true }),
+  ];
   // normalise order
   board.columns.forEach((col) => col.cards.forEach((cd, i) => (cd.order = i * 1000)));
   return { boards: [board] };
@@ -67,16 +76,31 @@ function allCards() {
 function findCard(id) {
   return allCards().find(([, , cd]) => cd.id === id);
 }
+// Mirror HakanbanData.full_payload(): archived cards leave the columns and are listed
+// per board under archived_cards.
+function payload() {
+  const p = JSON.parse(JSON.stringify(state));
+  p.boards.forEach((b) => {
+    b.archived_cards = [];
+    b.columns.forEach((c) => {
+      b.archived_cards.push(...c.cards.filter((cd) => cd.archived));
+      c.cards = c.cards.filter((cd) => !cd.archived);
+    });
+  });
+  p.can_undo = false;
+  p.can_redo = false;
+  return p;
+}
 function notify() {
-  const payload = JSON.parse(JSON.stringify(state));
-  subscribers.forEach((cb) => cb(payload));
+  const p = payload();
+  subscribers.forEach((cb) => cb(p));
 }
 function reindex(cards) {
   cards.forEach((c, i) => (c.order = i * 1000));
 }
 
 const handlers = {
-  get: () => JSON.parse(JSON.stringify(state)),
+  get: () => payload(),
   create_board: ({ title }) => {
     const b = { id: uid(), title, background: null, archived: false, labels: [], columns: [] };
     state.boards.push(b);
@@ -99,9 +123,10 @@ const handlers = {
     b.columns.push(col);
     return col;
   },
-  update_column: ({ board_id, column_id, title }) => {
+  update_column: ({ board_id, column_id, title, auto_archive_days }) => {
     const col = findBoard(board_id).columns.find((c) => c.id === column_id);
     if (title != null) col.title = title;
+    if (auto_archive_days !== undefined) col.auto_archive_days = auto_archive_days || null;
     return col;
   },
   delete_column: ({ board_id, column_id }) => {
@@ -117,12 +142,13 @@ const handlers = {
     b.columns.forEach((c, i) => (c.order = i * 1000));
     return { ok: true };
   },
-  create_card: ({ board_id, column_id, title, description, labels }) => {
+  create_card: ({ board_id, column_id, title, description, labels, card_type, epic_id }) => {
     const b = findBoard(board_id);
     const col = b.columns.find((c) => c.id === column_id);
     const card = {
       id: uid(), board_id, column_id, order: col.cards.length * 1000,
-      number: allCards().length + 1, title, description: description || "",
+      number: allCards().length + 1, card_type: card_type || "task", epic_id: epic_id || null,
+      title, description: description || "",
       labels: labels || [], assignees: [], due: null, due_complete: false,
       status: "needs_action", checklists: [], comments: [], cover: null, archived: false,
     };
@@ -136,6 +162,8 @@ const handlers = {
   update_card: ({ card_id, ...fields }) => {
     const [, , card] = findCard(card_id);
     Object.assign(card, fields);
+    if (fields.card_type === "task") allCards().forEach(([, , c]) => { if (c.epic_id === card_id) c.epic_id = null; });
+    if (fields.card_type === "epic") card.epic_id = null;
     return card;
   },
   move_card: ({ card_id, to_column, position }) => {
@@ -169,6 +197,7 @@ const handlers = {
   delete_label: ({ board_id, label_id }) => {
     const b = findBoard(board_id);
     b.labels = b.labels.filter((l) => l.id !== label_id);
+    allCards().forEach(([, , c]) => { c.labels = c.labels.filter((l) => l !== label_id); });
     return { deleted: label_id };
   },
   add_comment: ({ card_id, text }) => {
@@ -208,13 +237,15 @@ window.__mockHass = {
       const handler = handlers[cmd];
       if (!handler) return Promise.reject(new Error("unknown " + msg.type));
       const result = handler(msg);
-      Promise.resolve().then(notify);
+      // Real HA pushes the subscription event *before* the command result (the
+      // dispatcher fires synchronously inside the handler), so do the same here.
+      notify();
       return Promise.resolve(result);
     },
     subscribeMessage(cb, msg) {
       if (msg.type === "hakanban/subscribe") {
         subscribers.add(cb);
-        Promise.resolve().then(() => cb(JSON.parse(JSON.stringify(state))));
+        Promise.resolve().then(() => cb(payload()));
         return Promise.resolve(() => subscribers.delete(cb));
       }
       return Promise.resolve(() => {});

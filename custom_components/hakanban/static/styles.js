@@ -152,4 +152,84 @@ export const STYLES = `
 .hk-row input[type="datetime-local"], .hk-row input[type="text"] { padding: 6px; border-radius: 6px; border: 1px solid var(--hk-divider); background: var(--hk-col-bg); color: var(--hk-text); font: inherit; }
 .hk-check-item { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
 .hk-check-item.done span { text-decoration: line-through; color: var(--hk-subtle); }
+.hk-muted { color: var(--hk-subtle); font-size: .8rem; }
+
+/* ---- toolbar badge (active filter count) ---- */
+.hk-iconbtn { position: relative; }
+.hk-iconbtn.on { background: rgba(255,255,255,.4); }
+.hk-iconbtn .hk-count {
+  position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 3px;
+  border-radius: 8px; background: #eb5a46; color: #fff; font-size: .65rem; line-height: 16px;
+  box-sizing: border-box;
+}
+
+/* ---- filter bar ---- */
+.hk-filterbar {
+  display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center;
+  padding: 8px 16px; border-bottom: 1px solid var(--hk-divider);
+}
+.hk-filterbar .hk-fgroup { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.hk-filterbar .hk-fgroup > strong { font-size: .8rem; color: var(--hk-subtle); }
+.hk-filterbar select, .hk-row select, .hk-row input[type="number"] {
+  padding: 5px 6px; border-radius: 6px; border: 1px solid var(--hk-divider);
+  background: var(--hk-col-bg); color: var(--hk-text); font: inherit;
+}
+.hk-filterbar .hk-label-chip { height: 24px; padding: 0 10px; }
+.hk-seg { display: inline-flex; border: 1px solid var(--hk-divider); border-radius: 6px; overflow: hidden; }
+.hk-seg button {
+  background: none; border: 0; padding: 3px 9px; cursor: pointer; color: var(--hk-subtle); font: inherit; font-size: .8rem;
+}
+.hk-seg button.on { background: var(--hk-accent); color: #fff; }
+
+/* ---- epics ---- */
+.hk-card.epic { border-left: 4px solid #7b5cd6; }
+.hk-epic-tag {
+  display: inline-block; font-size: .62rem; font-weight: 700; letter-spacing: .06em;
+  color: #fff; background: #7b5cd6; border-radius: 4px; padding: 1px 6px; margin-bottom: 6px;
+}
+.hk-epic-ref {
+  display: inline-flex; align-items: center; gap: 3px; max-width: 100%;
+  font-size: .7rem; color: #7b5cd6; font-weight: 600; margin-bottom: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.hk-progress { height: 5px; border-radius: 3px; background: var(--hk-divider); overflow: hidden; margin-top: 6px; }
+.hk-progress > span { display: block; height: 100%; background: #61bd4f; }
+.hk-epic-child {
+  display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 6px; cursor: pointer;
+  font-size: .85rem;
+}
+.hk-epic-child:hover { background: var(--hk-col-bg); }
+.hk-epic-child .num { color: var(--hk-subtle); font-size: .75rem; }
+.hk-epic-child .col { margin-left: auto; color: var(--hk-subtle); font-size: .75rem; }
+.hk-epic-child.done .ttl { text-decoration: line-through; color: var(--hk-subtle); }
+
+/* ---- column auto-archive indicator ---- */
+.hk-col-auto { font-size: .7rem; color: var(--hk-subtle); white-space: nowrap; }
+
+/* ---- label manager ---- */
+.hk-swatch {
+  display: inline-block; width: 26px; height: 26px; border-radius: 6px; cursor: pointer;
+  border: 2px solid transparent; box-sizing: border-box; padding: 0;
+}
+.hk-swatch.selected { border-color: var(--hk-text); }
+.hk-swatch.big { width: 34px; height: 30px; font-size: .8rem; }
+.hk-lm-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.hk-lm-row .hk-lm-name {
+  flex: 1; padding: 6px; border-radius: 6px; border: 1px solid var(--hk-divider);
+  background: var(--hk-col-bg); color: var(--hk-text); font: inherit;
+}
+.hk-lm-count { color: var(--hk-subtle); font-size: .75rem; min-width: 2ch; text-align: right; }
+.hk-lm-palette { padding: 2px 0 8px 42px; }
+
+/* ---- archive drawer ---- */
+.hk-archive-list { max-height: 60vh; overflow-y: auto; }
+.hk-archive-item {
+  display: flex; gap: 8px; align-items: center; padding: 8px 4px;
+  border-bottom: 1px solid var(--hk-divider); font-size: .88rem;
+}
+.hk-archive-item .ttl { flex: 1; cursor: pointer; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hk-archive-item .meta { color: var(--hk-subtle); font-size: .72rem; white-space: nowrap; }
+.hk-archived-banner {
+  background: #f2d600; color: #172b4d; border-radius: 6px; padding: 6px 10px; font-size: .85rem; margin-bottom: 10px;
+}
 `;

@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 import homeassistant.helpers.config_validation as cv
 
-from .const import DATA_MANAGER, DOMAIN
+from .const import CARD_TYPES, DATA_MANAGER, DOMAIN
 from .data import HakanbanData, HakanbanError
 
 SERVICE_ADD_CARD = "add_card"
@@ -25,6 +25,8 @@ ADD_CARD_SCHEMA = vol.Schema(
         vol.Optional("description"): cv.string,
         vol.Optional("labels"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("due"): cv.string,
+        vol.Optional("card_type"): vol.In(CARD_TYPES),
+        vol.Optional("epic_id"): cv.string,
     }
 )
 
@@ -45,6 +47,9 @@ UPDATE_CARD_SCHEMA = vol.Schema(
         vol.Optional("labels"): vol.All(cv.ensure_list, [cv.string]),
         vol.Optional("due"): vol.Any(cv.string, None),
         vol.Optional("status"): vol.In(["needs_action", "completed"]),
+        vol.Optional("archived"): cv.boolean,
+        vol.Optional("card_type"): vol.In(CARD_TYPES),
+        vol.Optional("epic_id"): vol.Any(cv.string, None),
     }
 )
 
@@ -74,6 +79,8 @@ async def async_setup_services(hass: HomeAssistant) -> None:
                 description=call.data.get("description", ""),
                 labels=call.data.get("labels", []),
                 due=call.data.get("due"),
+                card_type=call.data.get("card_type"),
+                epic_id=call.data.get("epic_id"),
             )
         except HakanbanError as err:
             raise vol.Invalid(str(err)) from err

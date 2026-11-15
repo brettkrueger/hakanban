@@ -2,14 +2,17 @@
 // directly and relies on the live subscription to refresh the board behind it.
 
 import { STYLES } from "./styles.js";
+import { openLabelManager } from "./dialogs.js";
 import {
   escapeHtml,
   renderMarkdown,
   formatDue,
   contrastText,
+  boardCards,
+  boardEpics,
+  epicChildren,
+  epicProgress,
 } from "./util.js";
-
-const PALETTE = ["#61bd4f", "#f2d600", "#ff9f1a", "#eb5a46", "#c377e0", "#0079bf", "#00c2e0", "#51e898", "#ff78cb", "#344563"];
 
 export class HakanbanCardDetail extends HTMLElement {
   constructor() {
@@ -18,11 +21,12 @@ export class HakanbanCardDetail extends HTMLElement {
     this._editingDesc = false;
   }
 
-  setContext({ card, board, api, onClose }) {
+  setContext({ card, board, api, onClose, onOpenCard }) {
     this._card = card;
     this._board = board;
     this._api = api;
     this._onClose = onClose;
+    this._onOpenCard = onOpenCard;
     this.render();
   }
 
@@ -83,22 +87,77 @@ export class HakanbanCardDetail extends HTMLElement {
       .join("");
 
     const dueLocal = c.due ? String(c.due).slice(0, 16) : "";
+    const colTitle = (id) => (b.columns.find((x) => x.id === id) || {}).title || "";
+
+    // Type + epic section
+    const isEpic = c.card_type === "epic";
+    let epicHtml;
+    if (isEpic) {
+      const kids = epicChildren(b, c.id);
+      const p = epicProgress(b, c.id);
+      const pct = p.total ? Math.round((100 * p.done) / p.total) : 0;
+      const kidsHtml = kids
+        .map(
+          (k) => `<div class="hk-epic-child ${k.status === "completed" ? "done" : ""}" data-open-card="${k.id}">
+              <span class="num">#${k.number}</span><span class="ttl">${escapeHtml(k.title)}</span>
+              <span class="col">${k.archived ? "archived" : escapeHtml(colTitle(k.column_id))}</span>
+              <button class="hk-btn secondary" data-unlink="${k.id}" title="Remove from epic">✕</button>
+            </div>`
+        )
+        .join("");
+      const free = boardCards(b)
+        .filter((x) => !x.archived && x.card_type !== "epic" && !x.epic_id)
+        .sort((a, z) => a.number - z.number)
+        .map((x) => `<option value="${x.id}">#${x.number} ${escapeHtml(x.title)}</option>`)
+        .join("");
+      epicHtml = `
+          <div class="hk-section">
+            <h3>Cards in this epic (${p.done}/${p.total})</h3>
+            ${p.total ? `<div class="hk-progress" style="margin-bottom:6px"><span style="width:${pct}%"></span></div>` : ""}
+            ${kidsHtml || '<p class="hk-muted">No cards yet.</p>'}
+            <div class="hk-row" style="margin-top:6px">
+              <input type="text" id="hk-epic-new" placeholder="New card in this epic…" style="flex:1">
+              ${free ? `<select id="hk-epic-link"><option value="">+ Add existing card…</option>${free}</select>` : ""}
+            </div>
+          </div>`;
+    } else {
+      const options = boardEpics(b)
+        .map((e) => `<option value="${e.id}" ${e.id === c.epic_id ? "selected" : ""}>#${e.number} ${escapeHtml(e.title)}</option>`)
+        .join("");
+      const parent = c.epic_id ? boardCards(b).find((x) => x.id === c.epic_id) : null;
+      epicHtml = `
+          <div class="hk-section">
+            <h3>Epic</h3>
+            <div class="hk-row">
+              <select id="hk-epic">${options ? `<option value="">None</option>${options}` : `<option value="">No epics on this board</option>`}</select>
+              ${parent ? `<button class="hk-btn secondary" data-open-card="${parent.id}">Open epic</button>` : ""}
+            </div>
+          </div>`;
+    }
 
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
       <div class="hk-modal-back">
         <div class="hk-modal" role="dialog" aria-modal="true">
+          ${c.archived ? `<div class="hk-archived-banner">🗄 This card is archived.</div>` : ""}
+          ${isEpic ? `<span class="hk-epic-tag">EPIC</span>` : ""}
           <h2><textarea class="hk-title-edit" rows="1">${escapeHtml(c.title)}</textarea></h2>
-          <div class="hk-meta">#${c.number} · in <strong>${escapeHtml((b.columns.find((x) => x.id === c.column_id) || {}).title || "")}</strong></div>
+          <div class="hk-meta">#${c.number} · in <strong>${escapeHtml(colTitle(c.column_id))}</strong></div>
+
+          <div class="hk-section">
+            <h3>Type</h3>
+            <div class="hk-seg">
+              <button data-type="task" class="${isEpic ? "" : "on"}">Task</button>
+              <button data-type="epic" class="${isEpic ? "on" : ""}">Epic</button>
+            </div>
+          </div>
+
+          ${epicHtml}
 
           <div class="hk-section">
             <h3>Labels</h3>
             <div class="hk-label-row">${labelsHtml}
-              <span class="hk-label-chip" id="hk-add-label" style="background:var(--hk-divider);color:var(--hk-text)">+ New</span>
-            </div>
-            <div class="hk-row" id="hk-new-label" style="display:none;margin-top:8px">
-              <input type="text" id="hk-label-name" placeholder="Label name">
-              <span id="hk-label-palette"></span>
+              <span class="hk-label-chip" id="hk-manage-labels" style="background:var(--hk-divider);color:var(--hk-text)">✎ Edit labels</span>
             </div>
           </div>
 
@@ -172,25 +231,47 @@ export class HakanbanCardDetail extends HTMLElement {
       });
     });
 
-    // New label
-    const addLabel = $("#hk-add-label");
-    const newLabelRow = $("#hk-new-label");
-    addLabel.addEventListener("click", () => {
-      newLabelRow.style.display = newLabelRow.style.display === "none" ? "flex" : "none";
+    $("#hk-manage-labels").addEventListener("click", () =>
+      openLabelManager(() => this._board, api)
+    );
+
+    // Type
+    root.querySelectorAll("[data-type]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const type = btn.dataset.type;
+        if (type === (c.card_type || "task")) return;
+        if (type === "task" && epicChildren(this._board, c.id).length &&
+            !confirm("Turn this epic back into a task? Its cards will be removed from the epic.")) return;
+        api.updateCard(c.id, { card_type: type });
+      })
+    );
+
+    // Epic membership
+    const epicSel = $("#hk-epic");
+    if (epicSel) epicSel.addEventListener("change", () =>
+      api.updateCard(c.id, { epic_id: epicSel.value || null })
+    );
+    root.querySelectorAll("[data-open-card]").forEach((el) =>
+      el.addEventListener("click", (e) => {
+        if (e.target.closest("[data-unlink]")) return;
+        if (this._onOpenCard) this._onOpenCard(el.dataset.openCard);
+      })
+    );
+    root.querySelectorAll("[data-unlink]").forEach((btn) =>
+      btn.addEventListener("click", () => api.updateCard(btn.dataset.unlink, { epic_id: null }))
+    );
+    const linkSel = $("#hk-epic-link");
+    if (linkSel) linkSel.addEventListener("change", () => {
+      if (linkSel.value) api.updateCard(linkSel.value, { epic_id: c.id });
     });
-    const palette = $("#hk-label-palette");
-    PALETTE.forEach((color) => {
-      const sw = document.createElement("span");
-      sw.className = "hk-label-chip";
-      sw.style.background = color;
-      sw.style.width = "26px";
-      sw.style.cursor = "pointer";
-      sw.title = color;
-      sw.addEventListener("click", async () => {
-        const name = $("#hk-label-name").value.trim();
-        await api.createLabel(this._board.id, name, color);
-      });
-      palette.appendChild(sw);
+    const newChild = $("#hk-epic-new");
+    if (newChild) newChild.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && newChild.value.trim()) {
+        // New children start in the board's first list (usually "To Do").
+        const firstCol = (this._board.columns[0] || {}).id || c.column_id;
+        api.createCard(this._board.id, firstCol, newChild.value.trim(), { epic_id: c.id });
+        newChild.value = "";
+      }
     });
 
     // Due

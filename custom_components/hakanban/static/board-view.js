@@ -3,11 +3,16 @@
 
 import { STYLES } from "./styles.js";
 import { HakanbanCardDetail } from "./card-detail.js";
+import { openColumnSettings } from "./dialogs.js";
 import {
   escapeHtml,
   formatDue,
   dueState,
   contrastText,
+  emptyFilter,
+  cardMatchesFilter,
+  boardCards,
+  epicProgress,
 } from "./util.js";
 
 // Module-level drag state (HTML5 DnD can't read dataTransfer during dragover).
@@ -39,7 +44,7 @@ export class HakanbanBoard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._composer = { openCol: null, value: "" };
     this._addCol = { open: false, value: "" };
-    this._filter = { query: "", labels: new Set() };
+    this._filter = emptyFilter();
     this._openCardId = null;
     this._modal = null;
   }
@@ -51,7 +56,7 @@ export class HakanbanBoard extends HTMLElement {
     this._hass = hass;
   }
   set filter(f) {
-    this._filter = { query: (f.query || "").toLowerCase(), labels: f.labels || new Set() };
+    this._filter = { ...emptyFilter(), ...(f || {}) };
     this.render();
   }
   set board(b) {
@@ -64,16 +69,10 @@ export class HakanbanBoard extends HTMLElement {
   }
 
   _cardVisible(card) {
-    const { query, labels } = this._filter;
-    if (labels.size && !(card.labels || []).some((l) => labels.has(l))) return false;
-    if (query) {
-      const hay = `${card.title} ${card.description || ""} #${card.number}`.toLowerCase();
-      if (!hay.includes(query)) return false;
-    }
-    return true;
+    return cardMatchesFilter(card, this._filter);
   }
 
-  _cardHtml(card, labelById) {
+  _cardHtml(card, labelById, cardById) {
     const labels = (card.labels || [])
       .map((id) => labelById[id])
       .filter(Boolean)
@@ -96,18 +95,33 @@ export class HakanbanBoard extends HTMLElement {
     if (checks.total) badges.push(`<span class="hk-badge">☑ ${checks.done}/${checks.total}</span>`);
     if ((card.assignees || []).length) badges.push(`<span class="hk-badge">👤 ${card.assignees.length}</span>`);
 
+    const isEpic = card.card_type === "epic";
+    let epicTop = "";
+    let epicBottom = "";
+    if (isEpic) {
+      const p = epicProgress(this._board, card.id);
+      epicTop = `<span class="hk-epic-tag">EPIC</span>`;
+      badges.push(`<span class="hk-badge" title="Completed child cards">◆ ${p.done}/${p.total}</span>`);
+      if (p.total) epicBottom = `<div class="hk-progress"><span style="width:${Math.round((100 * p.done) / p.total)}%"></span></div>`;
+    } else if (card.epic_id && cardById[card.epic_id]) {
+      const epic = cardById[card.epic_id];
+      epicTop = `<div class="hk-epic-ref" title="Epic #${epic.number}: ${escapeHtml(epic.title)}">◆ ${escapeHtml(epic.title)}</div>`;
+    }
+
     const completed = card.status === "completed" ? "completed" : "";
     return `
-      <div class="hk-card ${completed}" draggable="true" data-card="${card.id}" data-col="${card.column_id}">
+      <div class="hk-card ${completed} ${isEpic ? "epic" : ""}" draggable="true" data-card="${card.id}" data-col="${card.column_id}">
+        ${epicTop}
         ${labels ? `<div class="hk-card-labels">${labels}</div>` : ""}
         <div class="hk-card-title">${escapeHtml(card.title)}</div>
         <div class="hk-card-badges">${badges.join("")}</div>
+        ${epicBottom}
       </div>`;
   }
 
-  _columnHtml(col, labelById) {
+  _columnHtml(col, labelById, cardById) {
     const cards = (col.cards || []).filter((c) => this._cardVisible(c));
-    const cardsHtml = cards.map((c) => this._cardHtml(c, labelById)).join("");
+    const cardsHtml = cards.map((c) => this._cardHtml(c, labelById, cardById)).join("");
     const composerOpen = this._composer.openCol === col.id;
     const footer = composerOpen
       ? `<div class="hk-composer">
@@ -123,7 +137,9 @@ export class HakanbanBoard extends HTMLElement {
       <div class="hk-col" data-col="${col.id}">
         <div class="hk-col-head" draggable="true" data-colhead="${col.id}">
           <span class="hk-col-title" data-coltitle="${col.id}">${escapeHtml(col.title)}</span>
+          ${col.auto_archive_days ? `<span class="hk-col-auto" title="Cards are archived after ${col.auto_archive_days} day(s) in this list">🗄 ${col.auto_archive_days}d</span>` : ""}
           <span class="hk-col-count">${cards.length}</span>
+          <button class="hk-col-menu" data-colsettings="${col.id}" title="List settings">⚙</button>
           <button class="hk-col-menu" data-colmenu="${col.id}" title="Delete list">🗑</button>
         </div>
         <div class="hk-cards" data-cards="${col.id}">${cardsHtml}</div>
@@ -138,7 +154,8 @@ export class HakanbanBoard extends HTMLElement {
     }
     const b = this._board;
     const labelById = Object.fromEntries((b.labels || []).map((l) => [l.id, l]));
-    const cols = (b.columns || []).map((c) => this._columnHtml(c, labelById)).join("");
+    const cardById = Object.fromEntries(boardCards(b).map((c) => [c.id, c]));
+    const cols = (b.columns || []).map((c) => this._columnHtml(c, labelById, cardById)).join("");
     const addCol = this._addCol.open
       ? `<div class="hk-add-col"><div class="hk-composer"><textarea data-addcol placeholder="List title…"></textarea>
            <div class="hk-composer-actions"><button class="hk-btn" data-addcol-go>Add list</button>
@@ -255,6 +272,12 @@ export class HakanbanBoard extends HTMLElement {
         if (e.key === "Enter") { e.preventDefault(); el.blur(); }
       });
     });
+    root.querySelectorAll("[data-colsettings]").forEach((el) =>
+      el.addEventListener("click", () => {
+        const col = this._board.columns.find((c) => c.id === el.dataset.colsettings);
+        if (col) openColumnSettings(this._board, col, api);
+      })
+    );
     root.querySelectorAll("[data-colmenu]").forEach((el) =>
       el.addEventListener("click", () => {
         if (confirm("Delete this list and its cards?")) api.deleteColumn(boardId, el.dataset.colmenu);
@@ -323,6 +346,11 @@ export class HakanbanBoard extends HTMLElement {
     this.render();
   }
 
+  // Public so the panel's archive list can open an archived card.
+  openCard(cardId) {
+    this._openCard(cardId);
+  }
+
   _openCard(cardId) {
     this._openCardId = cardId;
     const card = this._findCard(cardId);
@@ -335,6 +363,7 @@ export class HakanbanBoard extends HTMLElement {
       card,
       board: this._board,
       api: this._api,
+      onOpenCard: (id) => this._openCard(id),
       onClose: () => {
         this._openCardId = null;
         this._modal = null;
@@ -343,11 +372,7 @@ export class HakanbanBoard extends HTMLElement {
   }
 
   _findCard(cardId) {
-    for (const col of this._board.columns || []) {
-      const found = (col.cards || []).find((c) => c.id === cardId);
-      if (found) return found;
-    }
-    return null;
+    return boardCards(this._board).find((c) => c.id === cardId) || null;
   }
 
   _syncModal() {

@@ -64,3 +64,82 @@ export function debounce(fn, ms) {
     t = setTimeout(() => fn(...args), ms);
   };
 }
+
+// ---- filters --------------------------------------------------------------
+
+// The board filter. `labels` is a Set of label ids; every other field is "" when off.
+export function emptyFilter() {
+  return {
+    query: "",
+    labels: new Set(),
+    labelMode: "any", // "any" | "all"
+    due: "",          // "" | "overdue" | "soon" | "has" | "none"
+    status: "",       // "" | "open" | "completed"
+    type: "",         // "" | "task" | "epic"
+    epic: "",         // "" | <epic card id> | "__none" (cards without an epic)
+  };
+}
+
+// How many filter dimensions are active (search excluded), for the toolbar badge.
+export function activeFilterCount(f) {
+  if (!f) return 0;
+  return (f.labels?.size ? 1 : 0) + ["due", "status", "type", "epic"].filter((k) => f[k]).length;
+}
+
+export function cardMatchesFilter(card, f) {
+  if (!f) return true;
+  const labels = card.labels || [];
+  if (f.labels?.size) {
+    const hit = f.labelMode === "all"
+      ? [...f.labels].every((l) => labels.includes(l))
+      : labels.some((l) => f.labels.has(l));
+    if (!hit) return false;
+  }
+  if (f.due) {
+    const ds = dueState(card.due, card.due_complete);
+    if (f.due === "has" && !card.due) return false;
+    if (f.due === "none" && card.due) return false;
+    if (f.due === "overdue" && ds !== "overdue") return false;
+    // "Due soon" includes overdue: both need attention now.
+    if (f.due === "soon" && ds !== "soon" && ds !== "overdue") return false;
+  }
+  if (f.status === "open" && card.status === "completed") return false;
+  if (f.status === "completed" && card.status !== "completed") return false;
+  if (f.type && (card.card_type || "task") !== f.type) return false;
+  if (f.epic === "__none" && (card.epic_id || card.card_type === "epic")) return false;
+  // An epic filter shows the epic itself alongside its children.
+  if (f.epic && f.epic !== "__none" && card.epic_id !== f.epic && card.id !== f.epic) return false;
+  const query = (f.query || "").toLowerCase();
+  if (query) {
+    const hay = `${card.title} ${card.description || ""} #${card.number}`.toLowerCase();
+    if (!hay.includes(query)) return false;
+  }
+  return true;
+}
+
+// ---- epics ----------------------------------------------------------------
+
+// Every card on a board payload, including archived ones.
+export function boardCards(board) {
+  const live = (board?.columns || []).flatMap((c) => c.cards || []);
+  return live.concat(board?.archived_cards || []);
+}
+
+export function boardEpics(board) {
+  return boardCards(board)
+    .filter((c) => c.card_type === "epic" && !c.archived)
+    .sort((a, b) => a.number - b.number);
+}
+
+// Children of an epic. Archived children still count when completed (finished work
+// that was tidied away); archived-but-open children are treated as dropped.
+export function epicChildren(board, epicId) {
+  return boardCards(board)
+    .filter((c) => c.epic_id === epicId && (!c.archived || c.status === "completed"))
+    .sort((a, b) => a.number - b.number);
+}
+
+export function epicProgress(board, epicId) {
+  const kids = epicChildren(board, epicId);
+  return { done: kids.filter((c) => c.status === "completed").length, total: kids.length };
+}

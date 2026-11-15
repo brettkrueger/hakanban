@@ -34,7 +34,19 @@ v1 ships the **Core + multi-line paste** scope:
 - **Cards** — create, edit, archive, with **markdown descriptions**.
 - **Drag and drop** — move cards within a column and between columns, and reorder columns by
   dragging their headers (native HTML5 drag-and-drop — no build step, no external library).
-- **Labels** — colour + name per board, with **filter-by-label**.
+- **Labels** — colour + name per board. Rename, recolour, add or delete them from the toolbar's
+  🏷 button or **✎ Edit labels** on a card; deleting a label removes it from every card.
+- **Filters** — the ⚑ bar filters by labels (match *any* or *all*), due date (overdue, due
+  within 24h, has / no due date), status (open / done), type (tasks / epics) and epic.
+  Combine with search; the ⚑ button shows how many filters are active.
+- **Epics** — switch any card's type to **Epic** to group cards under it. Epics show a
+  progress bar (completed children / total) on the board; child cards show their epic's name.
+  From an epic, add new cards to it, pull in existing cards, or open a child. Filter the board
+  down to one epic.
+- **Automatic archival** — in a list's ⚙ settings, archive cards after *N* days in that
+  list (e.g. clear out *Done* after 7 days). Checked hourly; the clock starts when a card
+  enters the list. The toolbar's 🗄 button lists archived cards so you can open, restore or
+  delete them.
 - **Due dates** — with a due-complete checkbox. Cards with a due date also surface on the
   board's native HA **`calendar` entity**, so dated tasks appear in Home Assistant's Calendar
   panel and dashboard card.
@@ -128,9 +140,9 @@ List the column entities with `./scripts/ha states todo` and inspect one with
 
 | Service | Fields | Description |
 |---------|--------|-------------|
-| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?` | Create a card in a column. |
+| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?` | Create a card in a column. |
 | `hakanban.move_card` | `card_id`, `to_column`, `position?` | Move a card to another column (optionally at a position). |
-| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, …). |
+| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, archived, card_type, epic_id). |
 | `hakanban.add_comment` | `card_id`, `text` | Add a comment to a card. |
 | `hakanban.create_board` | `title` | Create a board. |
 | `hakanban.create_column` | `board_id`, `title` | Create a column on a board. |
@@ -145,7 +157,7 @@ Every mutation fires a Home Assistant event you can trigger automations on:
 | Event | Data |
 |-------|------|
 | `hakanban_card_created` | `board_id`, `column_id`, `card_id`, `title` |
-| `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` |
+| `hakanban_card_updated` | `board_id`, `card_id`, `column_id?`, `action?` (e.g. `auto_archived`) |
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_deleted` | `board_id`, `card_id` |

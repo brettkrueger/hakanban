@@ -243,6 +243,120 @@ def run():
     check("undo on empty history returns False", mgr.undo() is False)
     check("redo refills from a drained undo", mgr.can_redo is True)
 
+    # ------------------------------------------------------------ epics
+    eb = mgr.create_board("Epic Board", seed=True)
+    ebid = eb["id"]
+    ecol, ecol2, ecol3 = (c["id"] for c in eb["columns"])
+    epic = mgr.create_card(ebid, ecol, "Kitchen reno", card_type="epic")
+    check("epic created with type", epic["card_type"] == "epic" and epic["epic_id"] is None)
+    t1 = mgr.create_card(ebid, ecol, "Pick tiles", epic_id=epic["id"])
+    t2 = mgr.create_card(ebid, ecol, "Book plumber")
+    check("task defaults to type task", t2["card_type"] == "task")
+    mgr.update_card(t2["id"], epic_id=epic["id"])
+    check("epic_children lists both tasks",
+          [c["id"] for c in mgr.epic_children(epic["id"])] == [t1["id"], t2["id"]])
+    mgr.update_card(t2["id"], epic_id=None)
+    check("epic_id null clears link", mgr.cards[t2["id"]]["epic_id"] is None)
+
+    def raises(fn):
+        try:
+            fn()
+        except data.HakanbanError:
+            return True
+        return False
+
+    check("cannot link to a non-epic", raises(lambda: mgr.update_card(t2["id"], epic_id=t1["id"])))
+    check("epic cannot be its own epic", raises(lambda: mgr.update_card(epic["id"], epic_id=epic["id"])))
+    epic2 = mgr.create_card(ebid, ecol, "Other epic", card_type="epic")
+    check("epics cannot nest", raises(lambda: mgr.update_card(epic2["id"], epic_id=epic["id"])))
+    check("unknown type rejected", raises(lambda: mgr.update_card(t2["id"], card_type="story")))
+    check("failed update leaves card unchanged",
+          mgr.cards[t2["id"]]["card_type"] == "task" and mgr.cards[t2["id"]]["epic_id"] is None)
+    other_board = mgr.create_board("Other", seed=True)
+    ocol = other_board["columns"][0]["id"]
+    oc = mgr.create_card(other_board["id"], ocol, "Elsewhere")
+    check("cross-board epic link rejected", raises(lambda: mgr.update_card(oc["id"], epic_id=epic["id"])))
+
+    # Demoting an epic frees its children; promoting a child drops its own link.
+    mgr.update_card(t2["id"], epic_id=epic2["id"])
+    mgr.update_card(epic2["id"], card_type="task")
+    check("demoting epic unlinks children", mgr.cards[t2["id"]]["epic_id"] is None)
+    mgr.update_card(t1["id"], card_type="epic")
+    check("promoting a child clears its epic_id", mgr.cards[t1["id"]]["epic_id"] is None)
+    mgr.update_card(t1["id"], card_type="task", epic_id=epic["id"])
+
+    # Deleting an epic, or moving it / a child to another board, breaks links.
+    mgr.move_card(t1["id"], ocol, to_board=other_board["id"])
+    check("child moved off-board loses epic", mgr.cards[t1["id"]]["epic_id"] is None)
+    mgr.move_card(t1["id"], ecol, to_board=ebid)
+    mgr.update_card(t1["id"], epic_id=epic["id"])
+    mgr.delete_card(epic["id"])
+    check("deleting epic unlinks children", mgr.cards[t1["id"]]["epic_id"] is None)
+    mgr.undo()
+    check("undo of epic delete restores link", mgr.cards[t1["id"]]["epic_id"] == epic["id"])
+
+    # ----------------------------------------------------- unarchive / clear due
+    mgr.update_card(t2["id"], due="2026-07-01")
+    mgr.update_card(t2["id"], due=None)
+    check("due null clears the due date", mgr.cards[t2["id"]]["due"] is None)
+
+    # ------------------------------------------------------- auto-archive
+    utc = datetime.timezone.utc
+    T0 = datetime.datetime(2026, 6, 16, 12, 0, 0, tzinfo=utc)  # stub utcnow
+    aa = mgr.create_card(ebid, ecol3, "Old done")
+    bb = mgr.create_card(ebid, ecol3, "Fresh done")
+    cc = mgr.create_card(ebid, ecol2, "In progress")
+    mgr.cards[aa["id"]]["column_entered"] = (T0 - datetime.timedelta(days=10)).isoformat()
+    mgr.cards[cc["id"]]["column_entered"] = (T0 - datetime.timedelta(days=30)).isoformat()
+    check("sweep is a no-op with no rules", mgr.auto_archive(T0) == [])
+
+    undo_depth = len(mgr._undo_stack)
+    mgr.update_column(ebid, ecol3, auto_archive_days=7)
+    check("setting a rule archives overdue cards immediately", mgr.cards[aa["id"]]["archived"] is True)
+    check("fresh card in the column untouched", mgr.cards[bb["id"]]["archived"] is False)
+    check("other columns untouched", mgr.cards[cc["id"]]["archived"] is False)
+    check("rule + sweep is one undo step", len(mgr._undo_stack) == undo_depth + 1)
+    check("auto_archived event fired",
+          any(e[0] == "hakanban_card_updated" and e[1].get("action") == "auto_archived"
+              and e[1]["card_id"] == aa["id"] for e in hass.bus.events))
+    payload = mgr.board_payload(ebid)
+    check("archived cards listed in payload", aa["id"] in [c["id"] for c in payload["archived_cards"]])
+    check("archived cards excluded from columns",
+          all(aa["id"] != c["id"] for col in payload["columns"] for c in col["cards"]))
+
+    depth = len(mgr._undo_stack)
+    check("empty sweep adds no undo entry", mgr.auto_archive(T0) == [] and len(mgr._undo_stack) == depth)
+    later = T0 + datetime.timedelta(days=8)
+    swept = mgr.auto_archive(later)
+    check("timed sweep archives cards past the threshold", [c["id"] for c in swept] == [bb["id"]])
+    mgr.undo()
+    check("undo restores auto-archived card", mgr.cards[bb["id"]]["archived"] is False)
+
+    mgr.update_card(aa["id"], archived=False)
+    check("restoring resets the column clock",
+          mgr.cards[aa["id"]]["column_entered"] == T0.isoformat() and mgr.auto_archive(T0) == [])
+    mgr.move_card(cc["id"], ecol3)
+    check("moving into column resets the clock", mgr.cards[cc["id"]]["column_entered"] == T0.isoformat())
+    mgr.update_column(ebid, ecol3, auto_archive_days=0)
+    check("0 turns the rule off", mgr.boards[ebid]["columns"][2]["auto_archive_days"] is None)
+    check("no sweep with rule off", mgr.auto_archive(T0 + datetime.timedelta(days=365)) == [])
+
+    # Older stores get the new fields back-filled on load.
+    legacy = data.HakanbanData(FakeHass(), FakeStore())
+    legacy._data = {
+        "boards": {"b": {"id": "b", "title": "L", "columns": [{"id": "c", "title": "C", "order": 0}],
+                         "label_defs": [], "card_seq": 1}},
+        "cards": {"x": {"id": "x", "board_id": "b", "column_id": "c", "order": 0, "number": 1,
+                        "title": "Old", "updated": "2026-01-01T00:00:00+00:00"}},
+    }
+    legacy._normalize()
+    lc = legacy.cards["x"]
+    check("legacy card normalised",
+          lc["card_type"] == "task" and lc["epic_id"] is None
+          and lc["column_entered"] == "2026-01-01T00:00:00+00:00")
+    check("legacy column normalised",
+          legacy.boards["b"]["columns"][0]["auto_archive_days"] is None)
+
     failed = [n for n, ok in RESULTS if not ok]
     print()
     print(f"{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

@@ -40,6 +40,19 @@ add_card:
       example: "2026-07-01T18:00:00"
       selector:
         text:
+    card_type:
+      name: Card type
+      description: Card type. An epic groups other cards on the same board.
+      selector:
+        select:
+          options:
+            - task
+            - epic
+    epic_id:
+      name: Epic
+      description: Card ID of the epic this card belongs to (same board).
+      selector:
+        text:
 
 move_card:
   name: Move card
@@ -99,6 +112,24 @@ update_card:
           options:
             - needs_action
             - completed
+    archived:
+      name: Archived
+      description: Archive (true) or restore (false) the card.
+      selector:
+        boolean:
+    card_type:
+      name: Card type
+      description: Card type. An epic groups other cards on the same board.
+      selector:
+        select:
+          options:
+            - task
+            - epic
+    epic_id:
+      name: Epic
+      description: Card ID of the epic this card belongs to (same board).
+      selector:
+        text:
 
 add_comment:
   name: Add comment

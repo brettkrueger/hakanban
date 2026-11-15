@@ -2,7 +2,11 @@
 
 import { STYLES } from "./styles.js";
 import { HakanbanApi } from "./api.js";
-import { escapeHtml, contrastText, debounce } from "./util.js";
+import {
+  escapeHtml, contrastText, debounce, formatDue,
+  emptyFilter, activeFilterCount, boardEpics,
+} from "./util.js";
+import { openDialog, openLabelManager } from "./dialogs.js";
 import "./board-view.js";
 
 const BACKGROUNDS = [
@@ -17,8 +21,7 @@ export class HakanbanPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._activeBoardId = localStorage.getItem("hakanban_active_board") || null;
-    this._query = "";
-    this._activeLabels = new Set();
+    this._filter = emptyFilter();
     this._showFilter = false;
     this._showBg = false;
     this._built = false;
@@ -79,6 +82,7 @@ export class HakanbanPanel extends HTMLElement {
       if (!this._activeBoardId || !payload.boards.find((b) => b.id === this._activeBoardId)) {
         this._activeBoardId = payload.boards[0]?.id || null;
       }
+      this._pruneFilter();
       this._renderToolbar();
       this._renderBoard();
     });
@@ -112,6 +116,8 @@ export class HakanbanPanel extends HTMLElement {
           `<button class="hk-tab ${b.id === this._activeBoardId ? "active" : ""}" data-board="${b.id}">${escapeHtml(b.title)}</button>`
       )
       .join("");
+    const nFilters = activeFilterCount(this._filter);
+    const nArchived = (this._activeBoard()?.archived_cards || []).length;
     const canUndo = !!this._data?.can_undo;
     const canRedo = !!this._data?.can_redo;
     const tb = this.shadowRoot.getElementById("toolbar");
@@ -122,8 +128,10 @@ export class HakanbanPanel extends HTMLElement {
       </div>
       <button class="hk-iconbtn" id="undo-btn" title="Undo (Ctrl/⌘+Z)" ${canUndo ? "" : "disabled"}>↶</button>
       <button class="hk-iconbtn" id="redo-btn" title="Redo (Ctrl/⌘+Shift+Z)" ${canRedo ? "" : "disabled"}>↷</button>
-      <input class="hk-search" id="search" type="search" placeholder="Search cards…" value="${escapeHtml(this._query)}">
-      <button class="hk-iconbtn" id="filter-btn" title="Filter by label">⚑</button>
+      <input class="hk-search" id="search" type="search" placeholder="Search cards…" value="${escapeHtml(this._filter.query)}">
+      <button class="hk-iconbtn ${this._showFilter ? "on" : ""}" id="filter-btn" title="Filter cards">⚑${nFilters ? `<span class="hk-count">${nFilters}</span>` : ""}</button>
+      <button class="hk-iconbtn" id="labels-btn" title="Edit labels">🏷</button>
+      <button class="hk-iconbtn" id="archive-btn" title="Archived cards">🗄${nArchived ? `<span class="hk-count" style="background:#838c91">${nArchived}</span>` : ""}</button>
       <button class="hk-iconbtn" id="bg-btn" title="Board background">🎨</button>
       <button class="hk-iconbtn" id="edit-board" title="Rename board">✎</button>
       <button class="hk-iconbtn" id="del-board" title="Delete board">🗑</button>`;
@@ -137,7 +145,8 @@ export class HakanbanPanel extends HTMLElement {
         if (el.dataset.board === this._activeBoardId) return;
         this._activeBoardId = el.dataset.board;
         localStorage.setItem("hakanban_active_board", el.dataset.board);
-        this._activeLabels.clear();
+        // Labels and epics are per board, so other filters don't carry across.
+        this._filter = { ...emptyFilter(), query: this._filter.query };
         this._renderToolbar();
         this._renderBoard();
       });
@@ -161,7 +170,12 @@ export class HakanbanPanel extends HTMLElement {
       this._showFilter = !this._showFilter;
       this._showBg = false;
       this._renderFilterbar();
+      this._applyFilter();
     });
+    tb.querySelector("#labels-btn").addEventListener("click", () => {
+      if (this._activeBoard()) openLabelManager(() => this._activeBoard(), this._api);
+    });
+    tb.querySelector("#archive-btn").addEventListener("click", () => this._openArchive());
     tb.querySelector("#bg-btn").addEventListener("click", () => {
       this._showBg = !this._showBg;
       this._showFilter = false;
@@ -170,7 +184,7 @@ export class HakanbanPanel extends HTMLElement {
 
     const search = tb.querySelector("#search");
     const apply = debounce(() => {
-      this._query = search.value;
+      this._filter.query = search.value;
       this._applyFilter();
     }, 150);
     search.addEventListener("input", apply);
@@ -182,15 +196,40 @@ export class HakanbanPanel extends HTMLElement {
     const bar = this.shadowRoot.getElementById("filterbar");
     const board = this._activeBoard();
     if (!board) { bar.innerHTML = ""; return; }
+    const f = this._filter;
     let html = "";
     if (this._showFilter) {
       const chips = (board.labels || [])
         .map(
           (l) =>
-            `<span class="hk-label-chip ${this._activeLabels.has(l.id) ? "selected" : ""}" data-flabel="${l.id}" style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`
+            `<span class="hk-label-chip ${f.labels.has(l.id) ? "selected" : ""}" data-flabel="${l.id}" style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`
         )
         .join("");
-      html = `<div class="hk-row" style="padding:8px 16px;border-bottom:1px solid var(--hk-divider)"><strong style="margin-right:6px">Labels:</strong>${chips || "<em>No labels yet</em>"} <button class="hk-btn secondary" data-clearf>Clear</button></div>`;
+      const seg = (key, opts) =>
+        `<span class="hk-seg">${opts
+          .map(([v, t]) => `<button data-fseg="${key}" data-v="${v}" class="${f[key] === v ? "on" : ""}">${t}</button>`)
+          .join("")}</span>`;
+      const epics = boardEpics(board)
+        .map((e) => `<option value="${e.id}" ${f.epic === e.id ? "selected" : ""}>#${e.number} ${escapeHtml(e.title)}</option>`)
+        .join("");
+      html = `<div class="hk-filterbar">
+        <span class="hk-fgroup"><strong>Labels</strong>${chips || "<em>None</em>"}
+          ${f.labels.size > 1 ? seg("labelMode", [["any", "Any"], ["all", "All"]]) : ""}</span>
+        <span class="hk-fgroup"><strong>Due</strong>
+          <select data-fsel="due">
+            ${[["", "Any"], ["overdue", "Overdue"], ["soon", "Due within 24h"], ["has", "Has a due date"], ["none", "No due date"]]
+              .map(([v, t]) => `<option value="${v}" ${f.due === v ? "selected" : ""}>${t}</option>`).join("")}
+          </select></span>
+        <span class="hk-fgroup"><strong>Status</strong>${seg("status", [["", "All"], ["open", "Open"], ["completed", "Done"]])}</span>
+        <span class="hk-fgroup"><strong>Type</strong>${seg("type", [["", "All"], ["task", "Tasks"], ["epic", "Epics"]])}</span>
+        <span class="hk-fgroup"><strong>Epic</strong>
+          <select data-fsel="epic">
+            <option value="">Any</option>
+            <option value="__none" ${f.epic === "__none" ? "selected" : ""}>Not in an epic</option>
+            ${epics}
+          </select></span>
+        <button class="hk-btn secondary" data-clearf ${activeFilterCount(f) ? "" : "disabled"}>Clear filters</button>
+      </div>`;
     } else if (this._showBg) {
       const sw = BACKGROUNDS.map(
         (bg) =>
@@ -200,23 +239,90 @@ export class HakanbanPanel extends HTMLElement {
     }
     bar.innerHTML = html;
 
+    const changed = () => { this._renderFilterbar(); this._applyFilter(); };
     bar.querySelectorAll("[data-flabel]").forEach((el) =>
       el.addEventListener("click", () => {
         const id = el.dataset.flabel;
-        this._activeLabels.has(id) ? this._activeLabels.delete(id) : this._activeLabels.add(id);
-        this._renderFilterbar();
-        this._applyFilter();
+        f.labels.has(id) ? f.labels.delete(id) : f.labels.add(id);
+        changed();
       })
     );
+    bar.querySelectorAll("[data-fseg]").forEach((el) =>
+      el.addEventListener("click", () => { f[el.dataset.fseg] = el.dataset.v; changed(); })
+    );
+    bar.querySelectorAll("[data-fsel]").forEach((el) =>
+      el.addEventListener("change", () => { f[el.dataset.fsel] = el.value; changed(); })
+    );
     const clearf = bar.querySelector("[data-clearf]");
-    if (clearf) clearf.addEventListener("click", () => { this._activeLabels.clear(); this._renderFilterbar(); this._applyFilter(); });
+    if (clearf) clearf.addEventListener("click", () => {
+      this._filter = { ...emptyFilter(), query: f.query };
+      changed();
+    });
     bar.querySelectorAll("[data-bg]").forEach((el) =>
       el.addEventListener("click", () => this._api.updateBoard(board.id, { background: el.dataset.bg || null }))
     );
   }
 
+  // Drop filter values that no longer exist on the board (deleted label / epic).
+  _pruneFilter() {
+    const board = this._activeBoard();
+    if (!board) return;
+    const labelIds = new Set((board.labels || []).map((l) => l.id));
+    for (const id of [...this._filter.labels]) if (!labelIds.has(id)) this._filter.labels.delete(id);
+    const e = this._filter.epic;
+    if (e && e !== "__none" && !boardEpics(board).some((x) => x.id === e)) this._filter.epic = "";
+  }
+
   _applyFilter() {
-    if (this._boardEl) this._boardEl.filter = { query: this._query, labels: this._activeLabels };
+    if (this._boardEl) this._boardEl.filter = this._filter;
+    // Refresh the toolbar badge in place so the search box keeps focus.
+    const btn = this.shadowRoot.getElementById("filter-btn");
+    if (btn) {
+      const n = activeFilterCount(this._filter);
+      btn.innerHTML = `⚑${n ? `<span class="hk-count">${n}</span>` : ""}`;
+      btn.classList.toggle("on", this._showFilter);
+    }
+  }
+
+  _openArchive() {
+    if (!this._activeBoard()) return;
+    const { root, close } = openDialog("Archived cards", `<div id="hk-arch"></div>`, { width: 560 });
+    const render = () => {
+      const board = this._activeBoard();
+      if (!board) { close(); return; }
+      const colTitle = (id) => (board.columns.find((c) => c.id === id) || {}).title || "deleted list";
+      const items = (board.archived_cards || [])
+        .map(
+          (c) => `<div class="hk-archive-item">
+            <span class="ttl" data-open="${c.id}" title="Open card">${c.card_type === "epic" ? '<span class="hk-epic-tag" style="margin:0 4px 0 0">EPIC</span>' : ""}#${c.number} ${escapeHtml(c.title)}</span>
+            <span class="meta">${escapeHtml(colTitle(c.column_id))} · ${escapeHtml(formatDue(c.updated))}</span>
+            <button class="hk-btn secondary" data-restore="${c.id}">Restore</button>
+            <button class="hk-btn secondary" data-del="${c.id}" title="Delete permanently">🗑</button>
+          </div>`
+        )
+        .join("");
+      root.getElementById("hk-arch").innerHTML = `
+        <div class="hk-archive-list">${items || '<p class="hk-muted">Nothing archived on this board.</p>'}</div>
+        <div class="hk-modal-actions"><span class="grow"></span><button class="hk-btn" data-close>Close</button></div>`;
+      root.querySelector("[data-close]").addEventListener("click", close);
+      root.querySelectorAll("[data-open]").forEach((el) =>
+        el.addEventListener("click", () => { close(); this._boardEl.openCard(el.dataset.open); })
+      );
+      root.querySelectorAll("[data-restore]").forEach((el) =>
+        el.addEventListener("click", async () => {
+          await this._api.updateCard(el.dataset.restore, { archived: false });
+          render();
+        })
+      );
+      root.querySelectorAll("[data-del]").forEach((el) =>
+        el.addEventListener("click", async () => {
+          if (!confirm("Delete this card permanently? (Undo is still available.)")) return;
+          await this._api.deleteCard(el.dataset.del);
+          render();
+        })
+      );
+    };
+    render();
   }
 
   // Modal rename, opened from the toolbar's ✎ button (keeps tab clicks for
@@ -267,7 +373,7 @@ export class HakanbanPanel extends HTMLElement {
       this._boardEl.board = null;
       return;
     }
-    this._boardEl.filter = { query: this._query, labels: this._activeLabels };
+    this._boardEl.filter = this._filter;
     this._boardEl.board = board;
   }
 }
