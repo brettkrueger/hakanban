@@ -18,6 +18,9 @@ import {
   openBlockers,
   dependents,
   dependsOn,
+  cardPath,
+  cardUrl,
+  copyText,
 } from "./util.js";
 
 export class HakanbanCardDetail extends HTMLElement {
@@ -212,7 +215,9 @@ export class HakanbanCardDetail extends HTMLElement {
           ${c.archived ? `<div class="hk-archived-banner">🗄 This card is archived.</div>` : ""}
           ${isEpic ? `<span class="hk-epic-tag">EPIC</span>` : ""}
           <h2><textarea class="hk-title-edit" rows="1" data-keep="title">${escapeHtml(c.title)}</textarea></h2>
-          <div class="hk-meta">#${c.number} · in <strong>${escapeHtml(colTitle(c.column_id))}</strong>${
+          <div class="hk-meta"><a class="hk-card-link" id="hk-copy-link" href="${cardPath(c.id)}" title="Copy a link to this card">${
+            this._copied ? "✓ Link copied" : `🔗 #${c.number}`
+          }</a> · in <strong>${escapeHtml(colTitle(c.column_id))}</strong>${
             c.status === "completed" && c.completed
               ? ` · <span class="hk-completed-at">✓ Completed ${escapeHtml(formatTimestamp(c.completed))}</span>`
               : ""
@@ -305,6 +310,24 @@ export class HakanbanCardDetail extends HTMLElement {
       if (e.target.classList.contains("hk-modal-back")) this._close();
     });
     $("#hk-close").addEventListener("click", () => this._close());
+
+    // The card's number is its link: click copies it; Ctrl/⌘/middle-click opens it in a new
+    // tab and right-click → Copy link address work natively because it's a real <a href>.
+    $("#hk-copy-link").addEventListener("click", async (e) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      if (!(await copyText(cardUrl(c.id)))) {
+        prompt("Copy this link:", cardUrl(c.id));
+        return;
+      }
+      this._copied = true;
+      this.render();
+      clearTimeout(this._copiedTimer);
+      this._copiedTimer = setTimeout(() => {
+        this._copied = false;
+        if (this.isConnected) this.render();
+      }, 1500);
+    });
 
     const titleEl = $(".hk-title-edit");
     const saveTitle = () => {

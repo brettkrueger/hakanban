@@ -17,6 +17,7 @@ import {
   swimlanes,
   swimlaneChanges,
   renderRefs,
+  cardPath,
   openBlockers,
   dependents,
 } from "./util.js";
@@ -102,7 +103,7 @@ export class HakanbanBoard extends HTMLElement {
     const done = card.status === "completed";
     const ds = dueState(card.due, done);
     const badges = [];
-    badges.push(`<span class="hk-card-number">#${card.number}</span>`);
+    badges.push(`<a class="hk-card-number" href="${cardPath(card.id)}" draggable="false" title="Link to this card">#${card.number}</a>`);
     if (done && card.completed)
       badges.push(`<span class="hk-badge hk-done-badge" title="Completed ${escapeHtml(formatTimestamp(card.completed))}">✓ ${escapeHtml(formatDue(card.completed))}</span>`);
     if (card.due)
@@ -280,6 +281,11 @@ export class HakanbanBoard extends HTMLElement {
     root.querySelectorAll(".hk-card").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (this._justDragged) return;
+        // The #number is a real link: let Ctrl/⌘/Shift/middle-click open it in a new tab.
+        if (e.target.closest("a.hk-card-number")) {
+          if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;
+          e.preventDefault();
+        }
         // A "#12" reference in the title opens that card instead.
         const ref = e.target.closest("[data-ref]");
         this._openCard(ref ? ref.dataset.ref : el.dataset.card);
@@ -482,13 +488,27 @@ export class HakanbanBoard extends HTMLElement {
 
   // Public so the panel's archive list can open an archived card.
   openCard(cardId) {
-    this._openCard(cardId);
+    return this._openCard(cardId);
+  }
+
+  // Close the open card (e.g. the browser's Back button left its link).
+  closeCard() {
+    if (this._modal) this._modal._close();
+  }
+
+  get openCardId() {
+    return this._modal ? this._openCardId : null;
+  }
+
+  // Tell the host (the panel keeps the URL in step) that a card opened or closed.
+  _emit(type, cardId) {
+    this.dispatchEvent(new CustomEvent(type, { detail: { cardId }, bubbles: true, composed: true }));
   }
 
   _openCard(cardId) {
-    this._openCardId = cardId;
     const card = this._findCard(cardId);
-    if (!card) return;
+    if (!card) return false;
+    this._openCardId = cardId;
     if (!this._modal) {
       this._modal = new HakanbanCardDetail();
       document.body.appendChild(this._modal);
@@ -499,10 +519,14 @@ export class HakanbanBoard extends HTMLElement {
       api: this._api,
       onOpenCard: (id) => this._openCard(id),
       onClose: () => {
+        const id = this._openCardId;
         this._openCardId = null;
         this._modal = null;
+        this._emit("hakanban-card-closed", id);
       },
     });
+    this._emit("hakanban-card-opened", cardId);
+    return true;
   }
 
   _findCard(cardId) {

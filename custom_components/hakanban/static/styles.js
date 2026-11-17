@@ -101,7 +101,8 @@ export const STYLES = `
 .hk-badge.due-overdue { background: #eb5a46; color: #fff; }
 .hk-badge.due-soon { background: #f2d600; color: #172b4d; }
 .hk-badge.due-done { background: #61bd4f; color: #fff; }
-.hk-card-number { color: var(--hk-subtle); font-size: .7rem; }
+.hk-card-number { color: var(--hk-subtle); font-size: .7rem; text-decoration: none; }
+a.hk-card-number:hover { color: var(--primary-color, #4f9dff); text-decoration: underline; }
 
 .hk-composer { padding: 6px 8px 10px; }
 .hk-composer textarea {
@@ -138,6 +139,8 @@ export const STYLES = `
 .hk-modal h2 { margin: 0 0 4px; font-size: 1.25rem; display: flex; gap: 8px; align-items: flex-start; }
 .hk-modal h2 textarea { font: inherit; font-size: 1.2rem; font-weight: 600; border: 0; background: none; resize: none; width: 100%; color: inherit; }
 .hk-modal .hk-meta { color: var(--hk-subtle); font-size: .8rem; margin-bottom: 16px; }
+.hk-card-link { color: inherit; text-decoration: none; border-radius: 4px; padding: 1px 3px; margin-left: -3px; }
+.hk-card-link:hover, .hk-card-link:focus-visible { color: var(--primary-color, #4f9dff); text-decoration: underline; }
 .hk-section { margin: 16px 0; }
 .hk-section h3 { font-size: .85rem; text-transform: uppercase; letter-spacing: .04em; color: var(--hk-subtle); margin: 0 0 6px; }
 .hk-desc-edit { width: 100%; box-sizing: border-box; min-height: 90px; border-radius: 6px; border: 1px solid var(--hk-divider); padding: 8px; font: inherit; background: var(--hk-col-bg); color: var(--hk-text); }

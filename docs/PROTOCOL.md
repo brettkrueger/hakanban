@@ -185,6 +185,23 @@ frontend as a link to the card with that number on the same board. It's display-
 is stored. Numbers without a matching card, `code` spans, links/URL fragments and HTML
 entities are left as text.
 
+### Panel URLs
+
+The sidebar panel (`/hakanban`, `PANEL_URL_PATH`) routes on its sub-path, which HA passes to
+`<hakanban-panel>` as `route.path`:
+
+| URL | Opens |
+| --- | --- |
+| `/hakanban` | the board last used in this browser |
+| `/hakanban/board/<board_id>` | that board |
+| `/hakanban/card/<card_id>` | the card's board, with the card open (archived cards too) |
+
+Links use the card **id**, not its `#number`, because a card keeps its id for life but gets a
+new number if it moves to another board. Opening a card from the board pushes its URL (so
+Back closes it); following a link inside an open card replaces it; closing the card goes
+back. An unknown card id shows a toast and falls back to the board. Frontend only: nothing
+is stored and no WS command is involved.
+
 ### Done lists
 
 A list with `done: true` completes the cards in it. On a board with at least one done list a

@@ -43,6 +43,13 @@ v1 ships the **Core + multi-line paste** scope:
 - **Card references** — type `#12` in a card title, description, comment or checklist item
   and it becomes a link to card #12 on the same board (hover for its title; struck through
   once it's done). Numbers that don't match a card, code spans and URL fragments are left alone.
+- **Card links** — every card has its own URL, `/hakanban/card/<id>`. Opening a card puts
+  its link in the address bar (Back closes it again), so you can bookmark it or send it to
+  someone. In the card view, click the 🔗 `#number` at the top to copy the full link. On the
+  board, a card's `#number` is a link too: Ctrl/⌘- or middle-click it to open the card in a
+  new tab, or right-click → *Copy link address*. Following a link to a card on another board
+  switches to that board; a link to a deleted card just shows the board. Boards have links
+  too (`/hakanban/board/<id>`), and the address bar follows the board tab you pick.
 - **Dependencies** — mark a card as **blocked by** other cards on the same board from the
   card view's *Dependencies* section (or the new card dialog). Blocked cards get a red edge
   and a ⛔ badge listing what they're waiting on; cards holding others up get a ⛓ badge with

@@ -335,3 +335,51 @@ export function swimlaneChanges(mode, card, from, to) {
   }
   return null;
 }
+
+// ---- Deep links -------------------------------------------------------------
+// The sidebar panel lives at /hakanban (PANEL_URL_PATH in const.py). A card's link is
+// /hakanban/card/<id>; a board's is /hakanban/board/<id>. Ids are stable for a card's
+// whole life (its #number can change if it moves to another board), so links use them.
+export const PANEL_PATH = "/hakanban";
+
+export function cardPath(cardId, prefix = PANEL_PATH) {
+  return `${prefix}/card/${encodeURIComponent(cardId)}`;
+}
+
+export function boardPath(boardId, prefix = PANEL_PATH) {
+  return boardId ? `${prefix}/board/${encodeURIComponent(boardId)}` : prefix;
+}
+
+export function cardUrl(cardId) {
+  return location.origin + cardPath(cardId);
+}
+
+// Parse the panel's sub-path ("/card/<id>", "/board/<id>", "" ...) into { card } / { board } / {}.
+export function parseRoute(path) {
+  const m = /^\/(card|board)\/([^/?#]+)/.exec(path || "");
+  if (!m) return {};
+  let id;
+  try { id = decodeURIComponent(m[2]); } catch (e) { return {}; }
+  return { [m[1]]: id };
+}
+
+// Copy to the clipboard. navigator.clipboard needs a secure context, which a plain-http
+// HA install isn't, so fall back to a hidden textarea + execCommand.
+export async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* fall through */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}

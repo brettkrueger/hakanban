@@ -4,7 +4,8 @@ import { STYLES } from "./styles.js";
 import { HakanbanApi } from "./api.js";
 import {
   escapeHtml, contrastText, debounce, formatDue,
-  emptyFilter, activeFilterCount, boardEpics, SWIMLANE_MODES,
+  emptyFilter, activeFilterCount, boardEpics, boardCards, SWIMLANE_MODES,
+  PANEL_PATH, cardPath, boardPath, parseRoute,
 } from "./util.js";
 import { openDialog, openLabelManager, colorInputHtml, wireColorInput } from "./dialogs.js";
 import "./board-view.js";
@@ -46,6 +47,17 @@ export class HakanbanPanel extends HTMLElement {
     }
   }
 
+  // HA sets `route` ({ prefix: "/hakanban", path: "/card/<id>" }) on every navigation, so a
+  // card's link opens it and Back closes it. See _applyRoute.
+  set route(route) {
+    const same = this._route && route && route.path === this._route.path;
+    this._route = route;
+    if (!same) this._applyRoute();
+  }
+  get route() {
+    return this._route;
+  }
+
   connectedCallback() {
     if (this._hass && !this._api) {
       this._api = new HakanbanApi(this._hass);
@@ -59,6 +71,79 @@ export class HakanbanPanel extends HTMLElement {
       window.removeEventListener("keydown", this._onKeydown);
       this._onKeydown = null;
     }
+    if (this._onPopstate) {
+      window.removeEventListener("popstate", this._onPopstate);
+      this._onPopstate = null;
+    }
+  }
+
+  _prefix() {
+    return this._route?.prefix || PANEL_PATH;
+  }
+
+  // Same as HA's navigate(): change the URL, then tell the app so it updates `route`.
+  // We also track the route ourselves, so it stays right if HA's update arrives late.
+  _navigate(path, replace = false) {
+    const prefix = this._prefix();
+    this._route = { ...(this._route || {}), prefix, path: path.startsWith(prefix) ? path.slice(prefix.length) : path };
+    if (location.pathname === path) return;
+    if (replace) history.replaceState(history.state, "", path);
+    else history.pushState(null, "", path);
+    window.dispatchEvent(new CustomEvent("location-changed", { detail: { replace } }));
+  }
+
+  // Open the card / select the board the URL names; close a card the URL no longer names.
+  _applyRoute() {
+    if (!this._data || !this._boardEl) return;
+    const r = parseRoute(this._route?.path);
+    if (r.card) {
+      if (this._boardEl.openCardId === r.card) return;
+      const board = this._data.boards.find((b) => boardCards(b).some((c) => c.id === r.card));
+      if (!board) {
+        this.dispatchEvent(new CustomEvent("hass-notification", {
+          detail: { message: "That Hakanban card no longer exists." }, bubbles: true, composed: true,
+        }));
+        this._navigate(boardPath(this._activeBoardId, this._prefix()), true);
+        return;
+      }
+      if (board.id !== this._activeBoardId) this._selectBoard(board.id);
+      this._boardEl.openCard(r.card);
+      return;
+    }
+    if (this._boardEl.openCardId) this._boardEl.closeCard();
+    if (r.board && r.board !== this._activeBoardId && this._data.boards.some((b) => b.id === r.board)) {
+      this._selectBoard(r.board);
+    }
+  }
+
+  // Keep the URL in step with the open card. Opening one from the board pushes its link
+  // (so Back closes it); following a #ref inside the card replaces it, so one Back still
+  // returns to the board.
+  _onCardOpened(cardId) {
+    const cur = parseRoute(this._route?.path).card;
+    if (cur === cardId) return;
+    if (!cur) this._pushedCard = true;
+    this._navigate(cardPath(cardId, this._prefix()), !!cur);
+  }
+
+  _onCardClosed() {
+    if (!parseRoute(this._route?.path).card) return; // the URL already moved on (Back)
+    if (this._pushedCard) {
+      this._pushedCard = false;
+      this._route = { ...this._route, path: "" }; // until popstate reports where Back landed
+      history.back();
+    } else {
+      this._navigate(boardPath(this._activeBoardId, this._prefix()), true);
+    }
+  }
+
+  _selectBoard(id) {
+    this._activeBoardId = id;
+    try { localStorage.setItem("hakanban_active_board", id); } catch (e) { /* storage blocked */ }
+    // Labels and epics are per board, so other filters don't carry across.
+    this._filter = { ...emptyFilter(), query: this._filter.query };
+    this._renderToolbar();
+    this._renderBoard();
   }
 
   // Ctrl/⌘+Z = undo, Ctrl/⌘+Shift+Z or Ctrl+Y = redo. Skipped while typing in a
@@ -80,6 +165,13 @@ export class HakanbanPanel extends HTMLElement {
       }
     };
     window.addEventListener("keydown", this._onKeydown);
+    // Back/Forward: HA updates `route` too, but read the URL directly so we never miss it.
+    this._onPopstate = () => {
+      const prefix = this._prefix();
+      const p = location.pathname;
+      if (p === prefix || p.startsWith(prefix + "/")) this.route = { ...(this._route || {}), prefix, path: p.slice(prefix.length) };
+    };
+    window.addEventListener("popstate", this._onPopstate);
   }
 
   async _start() {
@@ -93,6 +185,10 @@ export class HakanbanPanel extends HTMLElement {
       this._pruneFilter();
       this._renderToolbar();
       this._renderBoard();
+      if (!this._routeApplied) {
+        this._routeApplied = true; // a link opened in a fresh tab: act on it once data is here
+        this._applyRoute();
+      }
     });
   }
 
@@ -112,6 +208,8 @@ export class HakanbanPanel extends HTMLElement {
     this._boardEl.style.minWidth = "0";
     this._boardEl.api = this._api;
     this._boardEl.hass = this._hass;
+    this._boardEl.addEventListener("hakanban-card-opened", (e) => this._onCardOpened(e.detail.cardId));
+    this._boardEl.addEventListener("hakanban-card-closed", () => this._onCardClosed());
     this.shadowRoot.getElementById("host").appendChild(this._boardEl);
     this._built = true;
   }
@@ -157,12 +255,8 @@ export class HakanbanPanel extends HTMLElement {
       el.addEventListener("click", () => {
         // Nothing to do when re-selecting the active tab; skip the re-render.
         if (el.dataset.board === this._activeBoardId) return;
-        this._activeBoardId = el.dataset.board;
-        localStorage.setItem("hakanban_active_board", el.dataset.board);
-        // Labels and epics are per board, so other filters don't carry across.
-        this._filter = { ...emptyFilter(), query: this._filter.query };
-        this._renderToolbar();
-        this._renderBoard();
+        this._selectBoard(el.dataset.board);
+        this._navigate(boardPath(el.dataset.board, this._prefix()), true);
       });
     });
 
