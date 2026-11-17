@@ -267,6 +267,42 @@ const handlers = {
     cl.items.find((i) => i.id === item_id).done = done;
     return { ok: true };
   },
+  update_checklist: ({ card_id, checklist_id, title }) => {
+    const [, , card] = findCard(card_id);
+    const cl = card.checklists.find((x) => x.id === checklist_id);
+    cl.title = title.trim() || "Checklist";
+    return cl;
+  },
+  delete_checklist: ({ card_id, checklist_id }) => {
+    const [, , card] = findCard(card_id);
+    card.checklists = card.checklists.filter((x) => x.id !== checklist_id);
+    return { deleted: checklist_id };
+  },
+  update_check_item: ({ card_id, checklist_id, item_id, text, done }) => {
+    const [, , card] = findCard(card_id);
+    const it = card.checklists.find((x) => x.id === checklist_id).items.find((i) => i.id === item_id);
+    if (text !== undefined) {
+      if (!text.trim()) throw new Error("A checklist item needs some text");
+      it.text = text.trim();
+    }
+    if (done !== undefined) it.done = done;
+    return it;
+  },
+  delete_check_item: ({ card_id, checklist_id, item_id }) => {
+    const [, , card] = findCard(card_id);
+    const cl = card.checklists.find((x) => x.id === checklist_id);
+    cl.items = cl.items.filter((i) => i.id !== item_id);
+    return { deleted: item_id };
+  },
+  move_check_item: ({ card_id, checklist_id, item_id, position, to_checklist }) => {
+    const [, , card] = findCard(card_id);
+    const src = card.checklists.find((x) => x.id === checklist_id);
+    const dst = to_checklist ? card.checklists.find((x) => x.id === to_checklist) : src;
+    const it = src.items.find((i) => i.id === item_id);
+    src.items = src.items.filter((i) => i.id !== item_id);
+    dst.items.splice(Math.max(0, Math.min(position, dst.items.length)), 0, it);
+    return it;
+  },
 };
 
 window.__hkLog = [];

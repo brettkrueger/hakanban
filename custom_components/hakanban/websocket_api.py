@@ -376,6 +376,82 @@ def ws_toggle_check_item(hass, connection, msg, manager: HakanbanData):
     return {"ok": True}
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/update_checklist",
+        vol.Required("card_id"): str,
+        vol.Required("checklist_id"): str,
+        vol.Required("title"): str,
+    }
+)
+@_guard
+def ws_update_checklist(hass, connection, msg, manager: HakanbanData):
+    return manager.update_checklist(msg["card_id"], msg["checklist_id"], msg["title"])
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/delete_checklist",
+        vol.Required("card_id"): str,
+        vol.Required("checklist_id"): str,
+    }
+)
+@_guard
+def ws_delete_checklist(hass, connection, msg, manager: HakanbanData):
+    manager.delete_checklist(msg["card_id"], msg["checklist_id"])
+    return {"deleted": msg["checklist_id"]}
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/update_check_item",
+        vol.Required("card_id"): str,
+        vol.Required("checklist_id"): str,
+        vol.Required("item_id"): str,
+        vol.Optional("text"): str,
+        vol.Optional("done"): bool,
+    }
+)
+@_guard
+def ws_update_check_item(hass, connection, msg, manager: HakanbanData):
+    return manager.update_check_item(
+        msg["card_id"], msg["checklist_id"], msg["item_id"],
+        text=msg.get("text"), done=msg.get("done"),
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/delete_check_item",
+        vol.Required("card_id"): str,
+        vol.Required("checklist_id"): str,
+        vol.Required("item_id"): str,
+    }
+)
+@_guard
+def ws_delete_check_item(hass, connection, msg, manager: HakanbanData):
+    manager.delete_check_item(msg["card_id"], msg["checklist_id"], msg["item_id"])
+    return {"deleted": msg["item_id"]}
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/move_check_item",
+        vol.Required("card_id"): str,
+        vol.Required("checklist_id"): str,
+        vol.Required("item_id"): str,
+        vol.Required("position"): vol.All(int, vol.Range(min=0)),
+        vol.Optional("to_checklist"): str,
+    }
+)
+@_guard
+def ws_move_check_item(hass, connection, msg, manager: HakanbanData):
+    return manager.move_check_item(
+        msg["card_id"], msg["checklist_id"], msg["item_id"],
+        msg["position"], to_checklist=msg.get("to_checklist"),
+    )
+
+
 _COMMANDS = (
     ws_subscribe,
     ws_get,
@@ -400,4 +476,9 @@ _COMMANDS = (
     ws_add_checklist,
     ws_add_check_item,
     ws_toggle_check_item,
+    ws_update_checklist,
+    ws_delete_checklist,
+    ws_update_check_item,
+    ws_delete_check_item,
+    ws_move_check_item,
 )

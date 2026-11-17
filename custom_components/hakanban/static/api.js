@@ -93,4 +93,21 @@ export class HakanbanApi {
   toggleCheckItem(card_id, checklist_id, item_id, done) {
     return this._send("toggle_check_item", { card_id, checklist_id, item_id, done });
   }
+  updateChecklist(card_id, checklist_id, title) {
+    return this._send("update_checklist", { card_id, checklist_id, title });
+  }
+  deleteChecklist(card_id, checklist_id) {
+    return this._send("delete_checklist", { card_id, checklist_id });
+  }
+  updateCheckItem(card_id, checklist_id, item_id, changes) {
+    return this._send("update_check_item", { card_id, checklist_id, item_id, ...changes });
+  }
+  deleteCheckItem(card_id, checklist_id, item_id) {
+    return this._send("delete_check_item", { card_id, checklist_id, item_id });
+  }
+  moveCheckItem(card_id, checklist_id, item_id, position, to_checklist) {
+    const msg = { card_id, checklist_id, item_id, position };
+    if (to_checklist && to_checklist !== checklist_id) msg.to_checklist = to_checklist;
+    return this._send("move_check_item", msg);
+  }
 }

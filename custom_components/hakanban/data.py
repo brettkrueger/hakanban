@@ -957,14 +957,76 @@ class HakanbanData:
                 return item
         raise HakanbanError(f"Unknown checklist {checklist_id}")
 
-    @_undoable
     def toggle_check_item(self, card_id: str, checklist_id: str, item_id: str, done: bool) -> None:
-        card = self._require_card(card_id)
+        # Kept for the existing websocket command; update_check_item does the (undoable) work.
+        self.update_check_item(card_id, checklist_id, item_id, done=done)
+
+    def _checklist(self, card: dict[str, Any], checklist_id: str) -> dict[str, Any]:
         for checklist in card.get("checklists", []):
             if checklist["id"] == checklist_id:
-                for item in checklist["items"]:
-                    if item["id"] == item_id:
-                        item["done"] = done
-                        self._commit(card["board_id"])
-                        return
+                return checklist
+        raise HakanbanError(f"Unknown checklist {checklist_id}")
+
+    def _check_item(self, checklist: dict[str, Any], item_id: str) -> dict[str, Any]:
+        for item in checklist["items"]:
+            if item["id"] == item_id:
+                return item
         raise HakanbanError(f"Unknown check item {item_id}")
+
+    def _touch(self, card: dict[str, Any]) -> None:
+        card["updated"] = _now()
+        self._commit(card["board_id"])
+
+    @_undoable
+    def update_checklist(self, card_id: str, checklist_id: str, title: str) -> dict[str, Any]:
+        card = self._require_card(card_id)
+        checklist = self._checklist(card, checklist_id)
+        checklist["title"] = title.strip() or "Checklist"
+        self._touch(card)
+        return checklist
+
+    @_undoable
+    def delete_checklist(self, card_id: str, checklist_id: str) -> None:
+        card = self._require_card(card_id)
+        checklist = self._checklist(card, checklist_id)
+        card["checklists"].remove(checklist)
+        self._touch(card)
+
+    @_undoable
+    def update_check_item(
+        self, card_id: str, checklist_id: str, item_id: str,
+        text: str | None = None, done: bool | None = None,
+    ) -> dict[str, Any]:
+        card = self._require_card(card_id)
+        item = self._check_item(self._checklist(card, checklist_id), item_id)
+        if text is not None:
+            if not text.strip():
+                raise HakanbanError("A checklist item needs some text")
+            item["text"] = text.strip()
+        if done is not None:
+            item["done"] = bool(done)
+        self._touch(card)
+        return item
+
+    @_undoable
+    def delete_check_item(self, card_id: str, checklist_id: str, item_id: str) -> None:
+        card = self._require_card(card_id)
+        checklist = self._checklist(card, checklist_id)
+        checklist["items"].remove(self._check_item(checklist, item_id))
+        self._touch(card)
+
+    @_undoable
+    def move_check_item(
+        self, card_id: str, checklist_id: str, item_id: str,
+        position: int, to_checklist: str | None = None,
+    ) -> dict[str, Any]:
+        """Reorder an item within its checklist, or move it to another checklist on the card."""
+        card = self._require_card(card_id)
+        source = self._checklist(card, checklist_id)
+        target = self._checklist(card, to_checklist) if to_checklist else source
+        item = self._check_item(source, item_id)
+        source["items"].remove(item)
+        position = max(0, min(int(position), len(target["items"])))
+        target["items"].insert(position, item)
+        self._touch(card)
+        return item

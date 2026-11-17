@@ -85,6 +85,12 @@ v1 ships the **Core + multi-line paste** scope:
 - **Due dates** — the badge turns green once the card is completed. Cards with a due date also surface on the
   board's native HA **`calendar` entity**, so dated tasks appear in Home Assistant's Calendar
   panel and dashboard card.
+- **Checklists** — edit them right in the card view: **+ Add checklist**, click a
+  checklist's name to rename it, **Delete** it, tick items, click an item's text to edit it
+  (`Enter` saves, `Esc` cancels, clearing the text removes it), ✕ to delete, and drag items
+  (or focus one and press `Alt`+`↑`/`↓`) to reorder them or move them into another checklist
+  on the same card. Pasting several lines into *Add an item…* adds one item per line. The
+  card's ☑ badge counts across all of its checklists.
 - **Comments / activity** on a card.
 - **Multi-line paste → many cards** — paste newline-separated text into the ⚡ quick add and get
   one card per non-empty line, created in order in a single batched call.
@@ -271,7 +277,7 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 
 ## Roadmap
 
-- [ ] Checklists UI (the store already reserves `checklists`)
+- [x] Checklists — add, rename, delete, edit, tick and reorder from the card view
 - [ ] Attachments
 - [ ] Card / board templates
 - [x] Swimlanes — group the board by type, epic, label or status

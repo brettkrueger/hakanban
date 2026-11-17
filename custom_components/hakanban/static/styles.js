@@ -154,8 +154,25 @@ export const STYLES = `
 .hk-danger { background: #eb5a46; }
 .hk-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .hk-row input[type="datetime-local"], .hk-row input[type="text"] { padding: 6px; border-radius: 6px; border: 1px solid var(--hk-divider); background: var(--hk-col-bg); color: var(--hk-text); font: inherit; }
-.hk-check-item { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
-.hk-check-item.done span { text-decoration: line-through; color: var(--hk-subtle); }
+.hk-check-item { display: flex; gap: 6px; align-items: center; padding: 2px 4px; border-radius: 6px; }
+.hk-check-item:hover { background: var(--hk-col-bg); }
+.hk-check-item.done .hk-check-text { text-decoration: line-through; color: var(--hk-subtle); }
+.hk-check-item.dragging { opacity: .4; }
+.hk-check-text { flex: 1; cursor: text; padding: 3px 2px; border-radius: 4px; word-break: break-word; }
+.hk-check-text:focus-visible { outline: 2px solid var(--primary-color, #0079bf); }
+.hk-drag-handle { cursor: grab; color: var(--hk-subtle); font-size: .75rem; letter-spacing: -2px; opacity: 0; user-select: none; }
+.hk-check-item:hover .hk-drag-handle, .hk-check-item:focus-within .hk-drag-handle { opacity: 1; }
+.hk-icon-btn { border: 0; background: transparent; color: var(--hk-subtle); cursor: pointer; border-radius: 4px; padding: 2px 6px; opacity: 0; }
+.hk-check-item:hover .hk-icon-btn, .hk-icon-btn:focus-visible { opacity: 1; }
+.hk-icon-btn:hover { background: var(--hk-divider); color: var(--hk-text); }
+.hk-check-edit { flex: 1; }
+.hk-check-items { min-height: 6px; margin-bottom: 4px; }
+.hk-cl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hk-cl-head .hk-cl-title { flex: 1; font-weight: 600; font-size: .9rem; color: var(--hk-text); background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 4px 6px; }
+.hk-cl-head .hk-cl-title:hover { border-color: var(--hk-divider); }
+.hk-cl-head .hk-cl-title:focus { border-color: var(--primary-color, #0079bf); background: var(--hk-card-bg); outline: none; }
+.hk-cl-progress { margin-bottom: 6px; }
+.hk-checklist .hk-add-check { flex: 1; }
 .hk-muted { color: var(--hk-subtle); font-size: .8rem; }
 
 /* ---- completion ---- */

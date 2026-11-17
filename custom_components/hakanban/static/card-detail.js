@@ -98,18 +98,42 @@ export class HakanbanCardDetail extends HTMLElement {
             ${waitingOpts ? `<div class="hk-row"><select id="hk-dep-block" class="hk-dep-select"><option value="">+ Add a card waiting on this…</option>${waitingOpts}</select></div>` : ""}
           </div>`;
 
+    // Checklists: rename / delete a list, tick, edit (click the text), delete, and drag
+    // (or Alt+↑/↓) items to reorder them or move them between this card's checklists.
     const checklistsHtml = (c.checklists || [])
       .map((cl) => {
         const total = cl.items.length;
         const done = cl.items.filter((i) => i.done).length;
+        const pct = total ? Math.round((100 * done) / total) : 0;
         const items = cl.items
-          .map(
-            (i) =>
-              `<label class="hk-check-item ${i.done ? "done" : ""}"><input type="checkbox" data-check="${cl.id}:${i.id}" ${i.done ? "checked" : ""}><span>${renderRefs(i.text, b)}</span></label>`
-          )
+          .map((i) => {
+            const key = `${cl.id}:${i.id}`;
+            if (this._editItem === key) {
+              return `<div class="hk-check-item editing" data-item="${key}">
+                  <input type="checkbox" disabled ${i.done ? "checked" : ""} aria-hidden="true">
+                  <input type="text" class="hk-check-edit" data-keep="item-edit" value="${escapeHtml(i.text)}" aria-label="Item text">
+                  <button class="hk-btn" data-item-save>Save</button>
+                  <button class="hk-btn secondary" data-item-cancel>Cancel</button>
+                </div>`;
+            }
+            return `<div class="hk-check-item ${i.done ? "done" : ""}" draggable="true" data-item="${key}">
+                <span class="hk-drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+                <input type="checkbox" data-check="${key}" ${i.done ? "checked" : ""} aria-label="Done">
+                <span class="hk-check-text" tabindex="0" data-item-text="${key}" data-keep="item-${key}" title="Click to edit · Alt+↑/↓ to move">${renderRefs(i.text, b)}</span>
+                <button class="hk-icon-btn" data-item-delete="${key}" title="Delete item" aria-label="Delete item">✕</button>
+              </div>`;
+          })
           .join("");
-        return `<div class="hk-section"><h3>${escapeHtml(cl.title)} (${done}/${total})</h3>${items}
-          <div class="hk-row"><input type="text" class="hk-add-check" data-cl="${cl.id}" placeholder="Add an item…"></div></div>`;
+        return `<div class="hk-section hk-checklist">
+            <div class="hk-cl-head">
+              <input type="text" class="hk-cl-title" data-cl-title="${cl.id}" data-keep="cl-title-${cl.id}" value="${escapeHtml(cl.title)}" aria-label="Checklist name" title="Click to rename">
+              <span class="hk-muted">${done}/${total}</span>
+              <button class="hk-btn secondary" data-cl-delete="${cl.id}">Delete</button>
+            </div>
+            ${total ? `<div class="hk-progress hk-cl-progress"><span style="width:${pct}%"></span></div>` : ""}
+            <div class="hk-check-items" data-cl-items="${cl.id}">${items}</div>
+            <div class="hk-row"><input type="text" class="hk-add-check" data-cl="${cl.id}" data-keep="add-${cl.id}" placeholder="Add an item…" title="Enter adds it · paste several lines to add one item per line"></div>
+          </div>`;
       })
       .join("");
 
@@ -156,7 +180,7 @@ export class HakanbanCardDetail extends HTMLElement {
             ${p.total ? `<div class="hk-progress" style="margin-bottom:6px"><span style="width:${pct}%"></span></div>` : ""}
             ${kidsHtml || '<p class="hk-muted">No cards yet.</p>'}
             <div class="hk-row" style="margin-top:6px">
-              <input type="text" id="hk-epic-new" placeholder="New card in this epic…" style="flex:1">
+              <input type="text" id="hk-epic-new" data-keep="epic-new" placeholder="New card in this epic…" style="flex:1">
               ${free ? `<select id="hk-epic-link"><option value="">+ Add existing card…</option>${free}</select>` : ""}
             </div>
           </div>`;
@@ -175,13 +199,19 @@ export class HakanbanCardDetail extends HTMLElement {
           </div>`;
     }
 
+    // A live push re-renders the whole modal; keep whatever field the user is typing in.
+    const active = this.shadowRoot.activeElement;
+    const keep = active?.dataset?.keep
+      ? { key: active.dataset.keep, value: active.value, start: active.selectionStart, end: active.selectionEnd }
+      : null;
+    this._rendering = true; // blur handlers ignore the blur caused by replacing the DOM
     this.shadowRoot.innerHTML = `
       <style>${STYLES}</style>
       <div class="hk-modal-back">
         <div class="hk-modal" role="dialog" aria-modal="true">
           ${c.archived ? `<div class="hk-archived-banner">🗄 This card is archived.</div>` : ""}
           ${isEpic ? `<span class="hk-epic-tag">EPIC</span>` : ""}
-          <h2><textarea class="hk-title-edit" rows="1">${escapeHtml(c.title)}</textarea></h2>
+          <h2><textarea class="hk-title-edit" rows="1" data-keep="title">${escapeHtml(c.title)}</textarea></h2>
           <div class="hk-meta">#${c.number} · in <strong>${escapeHtml(colTitle(c.column_id))}</strong>${
             c.status === "completed" && c.completed
               ? ` · <span class="hk-completed-at">✓ Completed ${escapeHtml(formatTimestamp(c.completed))}</span>`
@@ -224,7 +254,7 @@ export class HakanbanCardDetail extends HTMLElement {
             <h3>Description</h3>
             ${
               this._editingDesc
-                ? `<textarea class="hk-desc-edit" id="hk-desc">${escapeHtml(c.description || "")}</textarea>
+                ? `<textarea class="hk-desc-edit" id="hk-desc" data-keep="desc">${escapeHtml(c.description || "")}</textarea>
                    <div class="hk-row" style="margin-top:6px"><button class="hk-btn" id="hk-desc-save">Save</button><button class="hk-btn secondary" id="hk-desc-cancel">Cancel</button></div>`
                 : `<div class="hk-desc-render" id="hk-desc-render">${renderMarkdown(c.description, b) || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>`
             }
@@ -235,7 +265,7 @@ export class HakanbanCardDetail extends HTMLElement {
 
           <div class="hk-section">
             <h3>Activity</h3>
-            <div class="hk-row"><input type="text" id="hk-comment" placeholder="Write a comment…" style="flex:1"><button class="hk-btn" id="hk-comment-add">Comment</button></div>
+            <div class="hk-row"><input type="text" id="hk-comment" data-keep="comment" placeholder="Write a comment…" style="flex:1"><button class="hk-btn" id="hk-comment-add">Comment</button></div>
             ${commentsHtml}
           </div>
 
@@ -248,7 +278,17 @@ export class HakanbanCardDetail extends HTMLElement {
         </div>
       </div>`;
 
+    this._rendering = false;
     this._wire();
+    const kept = keep && this.shadowRoot.querySelector(`[data-keep="${keep.key}"]`);
+    if (kept) {
+      if ("value" in kept) kept.value = keep.value;
+      kept.focus();
+      try { kept.setSelectionRange(keep.start, keep.end); } catch (_) { /* not a text field */ }
+    } else if (this._editItem) {
+      const el = this.shadowRoot.querySelector(".hk-check-edit");
+      if (el) { el.focus(); el.select(); }
+    }
     if (this._focusLabel) {
       this.shadowRoot.querySelector(`[data-card-label="${this._focusLabel}"]`)?.focus();
       this._focusLabel = null;
@@ -271,7 +311,7 @@ export class HakanbanCardDetail extends HTMLElement {
       const v = titleEl.value.trim();
       if (v && v !== c.title) api.updateCard(c.id, { title: v });
     };
-    titleEl.addEventListener("blur", saveTitle);
+    titleEl.addEventListener("blur", () => { if (!this._rendering) saveTitle(); });
     titleEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); titleEl.blur(); }
     });
@@ -451,21 +491,168 @@ export class HakanbanCardDetail extends HTMLElement {
     }
 
     // Checklists
+    const findItem = (key) => {
+      const [clId, itemId] = key.split(":");
+      const cl = (c.checklists || []).find((x) => x.id === clId);
+      return { clId, itemId, cl, item: cl?.items.find((i) => i.id === itemId) };
+    };
     $("#hk-add-checklist").addEventListener("click", async () => {
-      await api.addChecklist(c.id, "Checklist");
+      const cl = await api.addChecklist(c.id, "Checklist");
+      // Straight into renaming it (the push has already re-rendered by now).
+      const el = cl?.id && root.querySelector(`[data-cl-title="${cl.id}"]`);
+      if (el) { el.focus(); el.select(); }
     });
+    root.querySelectorAll("[data-cl-title]").forEach((inp) => {
+      const cl = (c.checklists || []).find((x) => x.id === inp.dataset.clTitle);
+      let sent = cl.title;
+      const commit = () => {
+        const v = inp.value.trim();
+        if (!v) inp.value = cl.title;
+        else if (v !== sent) { sent = v; api.updateChecklist(c.id, cl.id, v); }
+      };
+      inp.addEventListener("keydown", (e) => {
+        // A push may re-render (and re-focus a fresh copy of this field) during commit(),
+        // so blur whichever copy is live rather than `inp`.
+        const blurLive = () => root.querySelector(`[data-cl-title="${cl.id}"]`)?.blur();
+        if (e.key === "Enter") { e.preventDefault(); commit(); blurLive(); }
+        else if (e.key === "Escape") { e.stopPropagation(); inp.value = cl.title; blurLive(); }
+      });
+      inp.addEventListener("blur", () => { if (!this._rendering) commit(); });
+    });
+    root.querySelectorAll("[data-cl-delete]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const cl = (c.checklists || []).find((x) => x.id === btn.dataset.clDelete);
+        if (cl.items.length && !confirm(`Delete the checklist "${cl.title}" and its ${cl.items.length} item(s)?`)) return;
+        api.deleteChecklist(c.id, cl.id);
+      })
+    );
     root.querySelectorAll("input[data-check]").forEach((cb) => {
       cb.addEventListener("change", () => {
-        const [clId, itemId] = cb.dataset.check.split(":");
-        api.toggleCheckItem(c.id, clId, itemId, cb.checked);
+        const { clId, itemId } = findItem(cb.dataset.check);
+        api.updateCheckItem(c.id, clId, itemId, { done: cb.checked });
       });
     });
+    root.querySelectorAll("[data-item-text]").forEach((el) => {
+      const startEdit = () => { this._editItem = el.dataset.itemText; this.render(); };
+      el.addEventListener("click", (e) => { if (!e.target.closest("[data-ref]")) startEdit(); });
+      el.addEventListener("keydown", (e) => {
+        const { clId, itemId, cl } = findItem(el.dataset.itemText);
+        if (e.key === "Enter") { e.preventDefault(); startEdit(); }
+        else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+          e.preventDefault();
+          const i = cl.items.findIndex((x) => x.id === itemId);
+          const j = i + (e.key === "ArrowUp" ? -1 : 1);
+          if (j < 0 || j >= cl.items.length) return;
+          // Optimistic: reorder locally so focus can follow the item at once.
+          cl.items.splice(j, 0, cl.items.splice(i, 1)[0]);
+          this.render();
+          root.querySelector(`[data-item-text="${clId}:${itemId}"]`)?.focus();
+          api.moveCheckItem(c.id, clId, itemId, j);
+        } else if (e.key === "Delete") {
+          e.preventDefault();
+          api.deleteCheckItem(c.id, clId, itemId);
+        }
+      });
+    });
+    root.querySelectorAll("[data-item-delete]").forEach((btn) =>
+      btn.addEventListener("click", () => {
+        const { clId, itemId } = findItem(btn.dataset.itemDelete);
+        api.deleteCheckItem(c.id, clId, itemId);
+      })
+    );
+    const editEl = $(".hk-check-edit");
+    if (editEl) {
+      const { clId, itemId, item } = findItem(this._editItem);
+      let finished = false;
+      const finish = (save) => {
+        if (finished) return;
+        finished = true;
+        this._editItem = null;
+        const v = editEl.value.trim();
+        if (save && item && v !== item.text) {
+          if (v) {
+            item.text = v; // optimistic
+            api.updateCheckItem(c.id, clId, itemId, { text: v });
+          } else {
+            api.deleteCheckItem(c.id, clId, itemId); // emptied = removed
+          }
+        }
+        this.render();
+      };
+      editEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+      });
+      editEl.addEventListener("blur", () => { if (!this._rendering) finish(true); });
+      // mousedown so the click doesn't blur (and save) the field first
+      root.querySelector("[data-item-save]").addEventListener("mousedown", (e) => { e.preventDefault(); finish(true); });
+      root.querySelector("[data-item-cancel]").addEventListener("mousedown", (e) => { e.preventDefault(); finish(false); });
+    }
+    const addItems = (clId, lines) => {
+      const texts = lines.map((l) => l.trim()).filter(Boolean);
+      // Sequential so they land in order.
+      texts.reduce((p, t) => p.then(() => api.addCheckItem(c.id, clId, t)), Promise.resolve());
+    };
     root.querySelectorAll(".hk-add-check").forEach((inp) => {
       inp.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && inp.value.trim()) {
-          api.addCheckItem(c.id, inp.dataset.cl, inp.value.trim());
+          addItems(inp.dataset.cl, [inp.value]);
+          inp.value = "";
+        } else if (e.key === "Escape" && inp.value) {
+          e.stopPropagation();
           inp.value = "";
         }
+      });
+      // Inputs flatten newlines, so catch a multi-line paste and add one item per line.
+      inp.addEventListener("paste", (e) => {
+        const text = e.clipboardData?.getData("text") || "";
+        if (!/\r?\n/.test(text.trim())) return;
+        e.preventDefault();
+        addItems(inp.dataset.cl, [inp.value + text.split(/\r?\n/)[0], ...text.split(/\r?\n/).slice(1)]);
+        inp.value = "";
+      });
+    });
+    // Drag items to reorder, including into another checklist on this card.
+    let dragItem = null;
+    let dropped = false;
+    root.querySelectorAll(".hk-check-item[draggable]").forEach((row) => {
+      row.addEventListener("dragstart", (e) => {
+        if (e.target !== row) return;
+        dragItem = row;
+        dropped = false;
+        row.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", row.dataset.item);
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+        const el = dragItem;
+        dragItem = null;
+        if (!el) return;
+        if (!dropped) { this.render(); return; } // cancelled: undo the live preview
+        const list = el.closest("[data-cl-items]");
+        const toCl = list.dataset.clItems;
+        const position = [...list.querySelectorAll("[data-item]")].indexOf(el);
+        const { clId, itemId, cl } = findItem(el.dataset.item);
+        if (toCl === clId && cl.items[position]?.id === itemId) return;
+        api.moveCheckItem(c.id, clId, itemId, position, toCl);
+      });
+    });
+    root.querySelectorAll("[data-cl-items]").forEach((list) => {
+      list.addEventListener("dragover", (e) => {
+        if (!dragItem) return;
+        e.preventDefault();
+        const before = [...list.querySelectorAll("[data-item]")].find((r) => {
+          if (r === dragItem) return false;
+          const box = r.getBoundingClientRect();
+          return e.clientY < box.top + box.height / 2;
+        });
+        if (before !== dragItem.nextElementSibling || dragItem.parentElement !== list) list.insertBefore(dragItem, before || null);
+      });
+      list.addEventListener("drop", (e) => {
+        if (!dragItem) return;
+        e.preventDefault();
+        dropped = true;
       });
     });
 

@@ -119,6 +119,11 @@ optimistic update and reconcile on the next push.
 | `hakanban/add_checklist` | `card_id`, `title` | checklist |
 | `hakanban/add_check_item` | `card_id`, `checklist_id`, `text` | item |
 | `hakanban/toggle_check_item` | `card_id`, `checklist_id`, `item_id`, `done` | `{ok:true}` |
+| `hakanban/update_checklist` | `card_id`, `checklist_id`, `title` (blank → "Checklist") | checklist |
+| `hakanban/delete_checklist` | `card_id`, `checklist_id` | `{deleted: checklist_id}` |
+| `hakanban/update_check_item` | `card_id`, `checklist_id`, `item_id`, `text?` (non-blank), `done?` | item |
+| `hakanban/delete_check_item` | `card_id`, `checklist_id`, `item_id` | `{deleted: item_id}` |
+| `hakanban/move_check_item` | `card_id`, `checklist_id`, `item_id`, `position` (int ≥ 0, clamped), `to_checklist?` (another checklist on the same card) | item |
 
 The subscription push message body is the full payload `{ "boards": [...] }`.
 
