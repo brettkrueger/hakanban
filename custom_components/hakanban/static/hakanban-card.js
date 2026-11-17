@@ -1,6 +1,6 @@
 // <hakanban-card> — embed a Hakanban board inside a Lovelace dashboard.
 // Config: { type: "custom:hakanban-card", board: "<id or title>", title?, height?,
-//           swimlanes?: "type" | "epic" | "label" | "status" }
+//           swimlanes?: "type" | "epic" | "label" | "status" | "assignee" }
 
 import { HakanbanApi } from "./api.js";
 import { escapeHtml } from "./util.js";

@@ -21,6 +21,10 @@ import {
   cardPath,
   cardUrl,
   copyText,
+  peopleList,
+  personInfo,
+  myPersonId,
+  avatarHtml,
 } from "./util.js";
 
 export class HakanbanCardDetail extends HTMLElement {
@@ -30,13 +34,19 @@ export class HakanbanCardDetail extends HTMLElement {
     this._editingDesc = false;
   }
 
-  setContext({ card, board, api, onClose, onOpenCard }) {
+  setContext({ card, board, api, hass, onClose, onOpenCard }) {
+    this._hass = hass;
     this._card = card;
     this._board = board;
     this._api = api;
     this._onClose = onClose;
     this._onOpenCard = onOpenCard;
     this.render();
+  }
+
+  // Kept current by the board (no re-render: people changes re-render via update()).
+  set hass(hass) {
+    this._hass = hass;
   }
 
   // Called by the parent when fresh board data arrives.
@@ -71,6 +81,28 @@ export class HakanbanCardDetail extends HTMLElement {
       .filter((l) => !selected.has(l.id))
       .map((l) => `<span class="hk-label-chip" data-label="${l.id}" title="Add label" style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`)
       .join("");
+
+    // Assignees: HA people. Chips (✕ to unassign), "Assign me", and a picker for the rest.
+    const people = peopleList(this._hass);
+    const me = myPersonId(this._hass);
+    const assigned = c.assignees || [];
+    const assigneeChips = assigned
+      .map((id) => personInfo(this._hass, id))
+      .map((p) => `<span class="hk-person-chip ${p.missing ? "missing" : ""}" data-person="${escapeHtml(p.id)}">${avatarHtml(p, "hk-avatar-sm")}${escapeHtml(p.name)}<button class="hk-chip-x" data-unassign="${escapeHtml(p.id)}" title="Unassign" aria-label="Unassign ${escapeHtml(p.name)}">✕</button></span>`)
+      .join("");
+    const spareOpts = people
+      .filter((p) => !assigned.includes(p.id))
+      .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+    const assigneesHtml = `
+          <div class="hk-section">
+            <h3>Assignees</h3>
+            <div class="hk-row hk-wrap" id="hk-assignees">
+              ${assigneeChips}
+              ${me && !assigned.includes(me) ? `<button class="hk-btn secondary" id="hk-assign-me">Assign me</button>` : ""}
+              ${spareOpts ? `<select id="hk-assign" class="hk-dep-select"><option value="">+ Assign someone…</option>${spareOpts}</select>` : ""}
+              ${!people.length && !assigned.length ? `<span class="hk-muted">No people in Home Assistant yet. Add them under Settings → People.</span>` : ""}
+            </div>
+          </div>`;
 
     // Dependencies
     const depRow = (x, removeAttr) => `<div class="hk-epic-child ${x.status === "completed" ? "done" : ""}" data-open-card="${x.id}">
@@ -226,6 +258,8 @@ export class HakanbanCardDetail extends HTMLElement {
               ? ` · <span class="hk-blocked-at" title="Waiting on ${escapeHtml(stillOpen.map((x) => `#${x.number} ${x.title}`).join(", "))}">⛔ Blocked by ${stillOpen.map((x) => `#${x.number}`).join(", ")}</span>`
               : ""
           }</div>
+
+          ${assigneesHtml}
 
           <div class="hk-section">
             <h3>Type</h3>
@@ -420,6 +454,22 @@ export class HakanbanCardDetail extends HTMLElement {
         dropped = true;
       });
     }
+
+    // Assignees
+    const assignSel = $("#hk-assign");
+    if (assignSel) assignSel.addEventListener("change", () => {
+      if (assignSel.value) api.updateCard(c.id, { assignees: [...(c.assignees || []), assignSel.value] });
+    });
+    const assignMe = $("#hk-assign-me");
+    if (assignMe) assignMe.addEventListener("click", () => {
+      const me = myPersonId(this._hass);
+      if (me) api.updateCard(c.id, { assignees: [...(c.assignees || []), me] });
+    });
+    root.querySelectorAll("[data-unassign]").forEach((btn) =>
+      btn.addEventListener("click", () =>
+        api.updateCard(c.id, { assignees: (c.assignees || []).filter((id) => id !== btn.dataset.unassign) })
+      )
+    );
 
     // Dependencies
     const depAdd = $("#hk-dep-add");

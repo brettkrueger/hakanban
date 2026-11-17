@@ -18,6 +18,10 @@ import {
   swimlaneChanges,
   renderRefs,
   cardPath,
+  peopleList,
+  peopleKey,
+  personInfo,
+  avatarHtml,
   openBlockers,
   dependents,
 } from "./util.js";
@@ -61,8 +65,17 @@ export class HakanbanBoard extends HTMLElement {
   set api(api) {
     this._api = api;
   }
+  // HA replaces hass on every state change; only re-render when people change.
   set hass(hass) {
     this._hass = hass;
+    if (this._modal) this._modal.hass = hass;
+    const key = peopleKey(hass);
+    if (key === this._peopleKey) return;
+    this._peopleKey = key;
+    if (this._board) {
+      this.render();
+      if (this._modal) this._syncModal();
+    }
   }
   set filter(f) {
     this._filter = { ...emptyFilter(), ...(f || {}) };
@@ -127,7 +140,12 @@ export class HakanbanBoard extends HTMLElement {
       { done: 0, total: 0 }
     );
     if (checks.total) badges.push(`<span class="hk-badge">☑ ${checks.done}/${checks.total}</span>`);
-    if ((card.assignees || []).length) badges.push(`<span class="hk-badge">👤 ${card.assignees.length}</span>`);
+    const who = (card.assignees || []).map((id) => personInfo(this._hass, id));
+    if (who.length) {
+      const shown = who.slice(0, 3).map((p) => avatarHtml(p)).join("");
+      const more = who.length > 3 ? `<span class="hk-avatar hk-avatar-more" title="${escapeHtml(who.slice(3).map((p) => p.name).join(", "))}">+${who.length - 3}</span>` : "";
+      badges.push(`<span class="hk-avatars" title="Assigned to ${escapeHtml(who.map((p) => p.name).join(", "))}">${shown}${more}</span>`);
+    }
 
     const isEpic = card.card_type === "epic";
     let epicTop = "";
@@ -205,7 +223,8 @@ export class HakanbanBoard extends HTMLElement {
         const count = perCol.reduce((n, cs) => n + cs.length, 0);
         const dot = lane.color
           ? `<span class="hk-lane-dot" style="background:${lane.color}"></span>`
-          : lane.epic ? `<span class="hk-epic-tag" style="margin:0">EPIC</span>` : "";
+          : lane.epic ? `<span class="hk-epic-tag" style="margin:0">EPIC</span>`
+          : lane.person ? avatarHtml(lane.person, "hk-avatar-sm") : "";
         const cells = (b.columns || [])
           .map((col, i) => `
             <div class="hk-lane-cell" data-dropcol="${col.id}" data-lane="${escapeHtml(lane.key)}">
@@ -236,7 +255,7 @@ export class HakanbanBoard extends HTMLElement {
     const labelById = Object.fromEntries((b.labels || []).map((l) => [l.id, l]));
     const cardById = Object.fromEntries(boardCards(b).map((c) => [c.id, c]));
     this._byId = cardById;
-    const lanes = swimlanes(b, this._lanes);
+    const lanes = swimlanes(b, this._lanes, peopleList(this._hass));
     const addCol = this._addCol.open
       ? `<div class="hk-add-col"><div class="hk-composer"><textarea data-addcol placeholder="List title…"></textarea>
            <div class="hk-composer-actions"><button class="hk-btn" data-addcol-go>Add list</button>
@@ -462,9 +481,10 @@ export class HakanbanBoard extends HTMLElement {
   }
 
   _newCard(colId, laneKey) {
-    const lane = laneKey != null ? (swimlanes(this._board, this._lanes) || []).find((l) => l.key === laneKey) : null;
+    const lane = laneKey != null ? (swimlanes(this._board, this._lanes, peopleList(this._hass)) || []).find((l) => l.key === laneKey) : null;
     openNewCardDialog(() => this._board, colId, this._api, {
       ...(lane?.preset || {}),
+      hass: this._hass,
       onOpenCard: (id) => this._openCard(id),
     });
   }
@@ -517,6 +537,7 @@ export class HakanbanBoard extends HTMLElement {
       card,
       board: this._board,
       api: this._api,
+      hass: this._hass,
       onOpenCard: (id) => this._openCard(id),
       onClose: () => {
         const id = this._openCardId;

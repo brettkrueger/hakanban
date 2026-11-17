@@ -50,6 +50,15 @@ v1 ships the **Core + multi-line paste** scope:
   new tab, or right-click → *Copy link address*. Following a link to a card on another board
   switches to that board; a link to a deleted card just shows the board. Boards have links
   too (`/hakanban/board/<id>`), and the address bar follows the board tab you pick.
+- **Assignees** — assign a card to one or more of the **people** set up in Home Assistant
+  (Settings → People). In the card view's *Assignees* section, pick someone from
+  **+ Assign someone…**, click **Assign me** (shown when your HA user is linked to a person),
+  or ✕ a chip to unassign. The new card dialog has the same picker. Cards show their
+  assignees' pictures (or initials) at the bottom right. The ⚑ filter can show **Assigned to
+  me**, **Unassigned** or one person's cards, search matches assignee names, and
+  **☰ Lanes → Assignee** gives each person a row: drag a card into someone's row to hand it
+  over. Assigning someone fires `hakanban_card_assigned` with their HA `user_id`, so an
+  automation can notify them.
 - **Dependencies** — mark a card as **blocked by** other cards on the same board from the
   card view's *Dependencies* section (or the new card dialog). Blocked cards get a red edge
   and a ⛔ badge listing what they're waiting on; cards holding others up get a ⛓ badge with
@@ -57,8 +66,8 @@ v1 ships the **Core + multi-line paste** scope:
   archived. The ⚑ filter can show only **ready** cards (open, nothing blocking them),
   **blocked** cards, or cards **blocking** others. Cycles are refused.
 - **Filters** — the ⚑ bar filters by labels (match *any* or *all*), due date (overdue, due
-  within 24h, has / no due date), status (open / done), type (tasks / epics), epic and
-  dependencies (ready / blocked / blocking).
+  within 24h, has / no due date), status (open / done), type (tasks / epics), assignee (me /
+  unassigned / a person), epic and dependencies (ready / blocked / blocking).
   Combine with search; the ⚑ button shows how many filters are active.
 - **Epics** — switch any card's type to **Epic** to group cards under it. Epics show a
   progress bar (completed children / total) on the board; child cards show their epic's name.
@@ -71,11 +80,11 @@ v1 ships the **Core + multi-line paste** scope:
   `Enter` in the title or `Ctrl`/`⌘`+`Enter` anywhere creates it. The **⚡** button next to it
   keeps the old title-only quick add (including multi-line paste).
 - **Swimlanes** — the toolbar's **☰ Lanes** menu splits the board into horizontal rows by
-  **type**, **epic**, **label** or **status**. Each lane has a cell per list; collapse a lane
+  **type**, **epic**, **label**, **status** or **assignee**. Each lane has a cell per list; collapse a lane
   by clicking its header. Dragging a card into another lane changes that field (e.g. drop it in
   the *Bug* lane to swap its label to *Bug*, or into an epic's lane to add it to the epic), and
   the **+** in a lane cell opens the new card dialog pre-filled for that lane. A card with
-  several labels shows in each of its label lanes. The choice is remembered per board in your
+  several labels (or assignees) shows in each of their lanes. The choice is remembered per board in your
   browser.
 - **Board backgrounds** — preset colours and gradients from the 🎨 bar, or any custom
   colour via the colour picker / hex field.
@@ -157,7 +166,7 @@ integration** — you do **not** need to add a Lovelace resource manually.
 ```yaml
 type: custom:hakanban-card
 board: <board_id>      # the id of the board to embed
-swimlanes: label       # optional: type | epic | label | status
+swimlanes: label       # optional: type | epic | label | status | assignee
 ```
 
 ---
@@ -190,9 +199,9 @@ List the column entities with `./scripts/ha states todo` and inspect one with
 
 | Service | Fields | Description |
 |---------|--------|-------------|
-| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?` | Create a card in a column. |
+| `hakanban.add_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?`, `assignees?` | Create a card in a column. |
 | `hakanban.move_card` | `card_id`, `to_column`, `position?` | Move a card to another column (optionally at a position). |
-| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, archived, card_type, epic_id, blocked_by). |
+| `hakanban.update_card` | `card_id`, … | Update card fields (title, description, labels, due, status, archived, card_type, epic_id, blocked_by, assignees). |
 | `hakanban.add_comment` | `card_id`, `text` | Add a comment to a card. |
 | `hakanban.create_board` | `title` | Create a board. |
 | `hakanban.create_column` | `board_id`, `title` | Create a column on a board. |
@@ -211,8 +220,12 @@ Every mutation fires a Home Assistant event you can trigger automations on:
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_unblocked` | `board_id`, `card_id`, `column_id` |
+| `hakanban_card_assigned` | `board_id`, `card_id`, `column_id`, `number`, `title`, `assignee` (person entity id), `user_id` (or `null`) |
 | `hakanban_card_deleted` | `board_id`, `card_id` |
 | `hakanban_board_changed` | `board_id`, `action` |
+
+`hakanban_card_assigned` fires once per person newly added to a card (on create or update),
+not for people who were already assigned.
 
 `hakanban_card_unblocked` fires for an open card when its last open blocker is completed,
 archived, deleted or removed from its `blocked_by` — handy for "this is ready to start"
@@ -239,6 +252,28 @@ automation:
         data:
           title: "Kanban"
           message: "A card was moved to Done."
+```
+
+**Tell someone when a card is assigned to them.** Each person's phone is different, so map
+the person to their notify service:
+
+```yaml
+automation:
+  - alias: "Hakanban: notify assignee"
+    triggers:
+      - trigger: event
+        event_type: hakanban_card_assigned
+    variables:
+      notifiers:
+        person.neil: notify.mobile_app_neil
+        person.sam: notify.mobile_app_sam
+    conditions:
+      - "{{ trigger.event.data.assignee in notifiers }}"
+    actions:
+      - action: "{{ notifiers[trigger.event.data.assignee] }}"
+        data:
+          title: "Assigned to you"
+          message: "#{{ trigger.event.data.number }} {{ trigger.event.data.title }}"
 ```
 
 **Create a card from another automation.** When the doorbell rings, drop a card into a
@@ -287,7 +322,8 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 - [x] Checklists — add, rename, delete, edit, tick and reorder from the card view
 - [ ] Attachments
 - [ ] Card / board templates
-- [x] Swimlanes — group the board by type, epic, label or status
+- [x] Swimlanes — group the board by type, epic, label, status or assignee
+- [x] Assignees — assign cards to Home Assistant people
 - [x] Calendar — boards expose dated cards as a native HA `calendar` entity
 - [ ] In-panel timeline / calendar view
 - [ ] Custom fields

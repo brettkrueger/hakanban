@@ -580,6 +580,54 @@ def run():
     km.undo()
     check("undo restores deleted item", items(cl1) == ["TWO", "three"])
 
+    # --- assignees (person entities)
+    class _State:
+        def __init__(self, attrs):
+            self.attributes = attrs
+
+    class _States:
+        def get(self, eid):
+            return {"person.ann": _State({"user_id": "u-ann", "friendly_name": "Ann"}),
+                    "person.bob": _State({"friendly_name": "Bob"})}.get(eid)
+
+    ah = FakeHass()
+    ah.states = _States()
+    am = data.HakanbanData(ah, FakeStore())
+    ab = am.create_board("Assign", seed=True)
+    acol = ab["columns"][0]["id"]
+    assigned = lambda: [(e[1]["assignee"], e[1]["user_id"]) for e in ah.bus.events if e[0] == "hakanban_card_assigned"]
+    ac = am.create_card(ab["id"], acol, "Do it", assignees=["person.ann", "person.ann"])
+    check("create with assignees de-duplicates", ac["assignees"] == ["person.ann"])
+    check("create fires card_assigned with user_id", assigned() == [("person.ann", "u-ann")])
+    am.update_card(ac["id"], assignees=["person.ann", "person.bob"])
+    check("update adds assignee", am.cards[ac["id"]]["assignees"] == ["person.ann", "person.bob"])
+    check("only the new assignee fires (no user -> None)", assigned() == [("person.ann", "u-ann"), ("person.bob", None)])
+    am.update_card(ac["id"], title="Renamed")
+    check("other updates keep assignees and don't re-fire",
+          am.cards[ac["id"]]["assignees"] == ["person.ann", "person.bob"] and len(assigned()) == 2)
+    am.update_card(ac["id"], assignees=["person.bob", "person.ann"])
+    check("reorder assignees doesn't fire", am.cards[ac["id"]]["assignees"] == ["person.bob", "person.ann"] and len(assigned()) == 2)
+    check("non-person assignee rejected",
+          raises(lambda: am.update_card(ac["id"], assignees=["light.kitchen"])))
+    check("bad create rejected", raises(lambda: am.create_card(ab["id"], acol, "X", assignees=["Ann"])))
+    check("rejected update leaves card untouched",
+          raises(lambda: am.update_card(ac["id"], assignees=["person.carl"], blocked_by=["nope"]))
+          and am.cards[ac["id"]]["assignees"] == ["person.bob", "person.ann"])
+    am.update_card(ac["id"], assignees=None)
+    check("null clears assignees", am.cards[ac["id"]]["assignees"] == [])
+    am.undo()
+    check("undo restores assignees", am.cards[ac["id"]]["assignees"] == ["person.bob", "person.ann"])
+    plain = data.HakanbanData(FakeHass(), FakeStore())
+    pb = plain.create_board("NoStates", seed=True)
+    pc = plain.create_card(pb["id"], pb["columns"][0]["id"], "x", assignees=["person.zed"])
+    check("assigning works without hass.states", pc["assignees"] == ["person.zed"])
+    am.cards[ac["id"]].pop("assignees")
+    am._normalize()
+    check("normalize back-fills assignees", am.cards[ac["id"]]["assignees"] == [])
+    am.cards[ac["id"]]["assignees"] = ["person.ann", 5, "nope", "person.ann"]
+    am._normalize()
+    check("normalize drops malformed assignees", am.cards[ac["id"]]["assignees"] == ["person.ann"])
+
     failed = [n for n, ok in RESULTS if not ok]
     print()
     print(f"{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")

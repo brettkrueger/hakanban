@@ -3,7 +3,10 @@
 // board re-render from a live push never wipes it out.
 
 import { STYLES } from "./styles.js";
-import { escapeHtml, contrastText, boardCards, boardEpics, normalizeHex } from "./util.js";
+import {
+  escapeHtml, contrastText, boardCards, boardEpics, normalizeHex,
+  peopleList, personInfo, myPersonId, avatarHtml,
+} from "./util.js";
 
 export const PALETTE = [
   "#61bd4f", "#f2d600", "#ff9f1a", "#eb5a46", "#c377e0",
@@ -267,13 +270,14 @@ export function openColumnSettings(board, column, api) {
 // Jira/Trello-style "create issue" form: fill in the whole ticket, then create it in one go.
 // getBoard() returns the current board payload (labels/lists/epics can change while open).
 // onOpenCard(id), if given, enables "Create & open" to jump into the full card view.
-export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, cardType = "task", epicId = "", labels = [] } = {}) {
+export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, cardType = "task", epicId = "", labels = [], assignees = [], hass = null } = {}) {
   const state = {
     columnId,
     cardType,
     epicId,
     labels: new Set(labels),
     blockedBy: [],
+    assignees: [...assignees],
     another: false,
   };
   const dirty = () =>
@@ -288,6 +292,21 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
       .map((l) => `<span class="hk-label-chip ${state.labels.has(l.id) ? "selected" : ""}" data-nc-label="${l.id}"
           style="background:${l.color};color:${contrastText(l.color)}">${escapeHtml(l.name || "·")}</span>`)
       .join("") || `<span class="hk-muted">No labels on this board yet.</span>`;
+
+  // "Assign to": chosen people as removable chips plus a picker of everyone else in HA.
+  const assigneesHtml = () => {
+    const people = peopleList(hass);
+    const me = myPersonId(hass);
+    const chips = state.assignees
+      .map((id) => personInfo(hass, id))
+      .map((p) => `<span class="hk-person-chip">${avatarHtml(p, "hk-avatar-sm")}${escapeHtml(p.name)}<button class="hk-chip-x" data-nc-unassign="${escapeHtml(p.id)}" title="Unassign" aria-label="Unassign ${escapeHtml(p.name)}">✕</button></span>`)
+      .join("");
+    const spare = people.filter((p) => !state.assignees.includes(p.id));
+    const meBtn = me && !state.assignees.includes(me) ? `<button type="button" class="hk-btn secondary" data-nc-assign-me>Assign me</button>` : "";
+    const opts = spare.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>`).join("");
+    if (!people.length && !chips) return `<span class="hk-muted">No people in Home Assistant yet (Settings → People).</span>`;
+    return `${chips}${meBtn}${opts ? `<select id="hk-nc-assign" class="hk-dep-select"><option value="">+ Assign someone…</option>${opts}</select>` : ""}`;
+  };
 
   // "Blocked by": chosen blockers as removable chips plus a picker of open cards.
   const blockersHtml = (board) => {
@@ -351,6 +370,10 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
         <div class="hk-row"><input type="datetime-local" id="hk-nc-due"></div>
       </div>
       <div class="hk-section">
+        <h3>Assign to</h3>
+        <div class="hk-row hk-wrap" id="hk-nc-people">${assigneesHtml()}</div>
+      </div>
+      <div class="hk-section">
         <h3>Blocked by</h3>
         <div class="hk-row hk-wrap" id="hk-nc-deps">${blockersHtml(board)}</div>
       </div>
@@ -403,6 +426,7 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
     if (due) extra.due = due + ":00";
     if (state.cardType !== "epic" && state.epicId) extra.epic_id = state.epicId;
     if (state.blockedBy.length) extra.blocked_by = [...state.blockedBy];
+    if (state.assignees.length) extra.assignees = [...state.assignees];
     const checks = root.getElementById("hk-nc-checks").value.split("\n").map((l) => l.trim()).filter(Boolean);
 
     busy = true;
@@ -467,6 +491,26 @@ export function openNewCardDialog(getBoard, columnId, api, { onOpenCard = null, 
       );
     };
     wireDeps();
+    const ppl = root.getElementById("hk-nc-people");
+    const wirePeople = () => {
+      const redraw = () => { ppl.innerHTML = assigneesHtml(); wirePeople(); };
+      ppl.querySelector("#hk-nc-assign")?.addEventListener("change", (e) => {
+        if (!e.target.value) return;
+        state.assignees.push(e.target.value);
+        redraw();
+      });
+      ppl.querySelector("[data-nc-assign-me]")?.addEventListener("click", () => {
+        state.assignees.push(myPersonId(hass));
+        redraw();
+      });
+      ppl.querySelectorAll("[data-nc-unassign]").forEach((b) =>
+        b.addEventListener("click", () => {
+          state.assignees = state.assignees.filter((id) => id !== b.dataset.ncUnassign);
+          redraw();
+        })
+      );
+    };
+    wirePeople();
     root.getElementById("hk-nc-another").addEventListener("change", (e) => (state.another = e.target.checked));
     const titleEl = root.getElementById("hk-nc-title");
     titleEl.addEventListener("input", () => titleEl.classList.remove("invalid"));

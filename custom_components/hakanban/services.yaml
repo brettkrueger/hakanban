@@ -58,6 +58,13 @@ add_card:
       description: Card IDs (same board) that must be completed before this one.
       selector:
         object:
+    assignees:
+      name: Assignees
+      description: People (person entities) the card is assigned to.
+      selector:
+        entity:
+          domain: person
+          multiple: true
 
 move_card:
   name: Move card
@@ -140,6 +147,13 @@ update_card:
       description: Card IDs (same board) that must be completed before this one.
       selector:
         object:
+    assignees:
+      name: Assignees
+      description: People (person entities) the card is assigned to.
+      selector:
+        entity:
+          domain: person
+          multiple: true
 
 add_comment:
   name: Add comment

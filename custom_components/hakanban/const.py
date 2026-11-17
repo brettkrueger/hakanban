@@ -53,6 +53,7 @@ EVENT_CARD_COMPLETED: Final = f"{DOMAIN}_card_completed"
 EVENT_CARD_DELETED: Final = f"{DOMAIN}_card_deleted"
 # A card whose last open blocker was completed, archived, deleted or removed.
 EVENT_CARD_UNBLOCKED: Final = f"{DOMAIN}_card_unblocked"
+EVENT_CARD_ASSIGNED: Final = f"{DOMAIN}_card_assigned"
 EVENT_BOARD_CHANGED: Final = f"{DOMAIN}_board_changed"
 
 # Signal used to push live updates to subscribed websocket clients

@@ -5,7 +5,7 @@ import { HakanbanApi } from "./api.js";
 import {
   escapeHtml, contrastText, debounce, formatDue,
   emptyFilter, activeFilterCount, boardEpics, boardCards, SWIMLANE_MODES,
-  PANEL_PATH, cardPath, boardPath, parseRoute,
+  PANEL_PATH, cardPath, boardPath, parseRoute, peopleList, myPersonId,
 } from "./util.js";
 import { openDialog, openLabelManager, colorInputHtml, wireColorInput } from "./dialogs.js";
 import "./board-view.js";
@@ -140,8 +140,8 @@ export class HakanbanPanel extends HTMLElement {
   _selectBoard(id) {
     this._activeBoardId = id;
     try { localStorage.setItem("hakanban_active_board", id); } catch (e) { /* storage blocked */ }
-    // Labels and epics are per board, so other filters don't carry across.
-    this._filter = { ...emptyFilter(), query: this._filter.query };
+    // Labels and epics are per board, so other filters don't carry across (people do).
+    this._filter = { ...emptyFilter(), query: this._filter.query, assignee: this._filter.assignee };
     this._renderToolbar();
     this._renderBoard();
   }
@@ -335,6 +335,12 @@ export class HakanbanPanel extends HTMLElement {
           </select></span>
         <span class="hk-fgroup"><strong>Status</strong>${seg("status", [["", "All"], ["open", "Open"], ["completed", "Done"]])}</span>
         <span class="hk-fgroup"><strong>Type</strong>${seg("type", [["", "All"], ["task", "Tasks"], ["epic", "Epics"]])}</span>
+        <span class="hk-fgroup"><strong>Assignee</strong>
+          <select data-fsel="assignee">
+            ${[["", "Anyone"], ...(myPersonId(this._hass) ? [["__me", "Assigned to me"]] : []), ["__none", "Unassigned"],
+               ...peopleList(this._hass).map((p) => [p.id, p.name])]
+              .map(([v, t]) => `<option value="${escapeHtml(v)}" ${f.assignee === v ? "selected" : ""}>${escapeHtml(t)}</option>`).join("")}
+          </select></span>
         <span class="hk-fgroup"><strong>Dependencies</strong>
           <select data-fsel="deps">
             ${[["", "Any"], ["ready", "Ready (nothing blocking)"], ["blocked", "Blocked"], ["blocking", "Blocking other cards"]]
@@ -397,8 +403,15 @@ export class HakanbanPanel extends HTMLElement {
     if (e && e !== "__none" && !boardEpics(board).some((x) => x.id === e)) this._filter.epic = "";
   }
 
+  // The filter plus hass-derived context the board needs: who "me" is, and people's names
+  // (so a search matches assignees).
+  _boardFilter() {
+    const names = Object.fromEntries(peopleList(this._hass).map((p) => [p.id, p.name]));
+    return { ...this._filter, me: myPersonId(this._hass), names };
+  }
+
   _applyFilter() {
-    if (this._boardEl) this._boardEl.filter = this._filter;
+    if (this._boardEl) this._boardEl.filter = this._boardFilter();
     // Refresh the toolbar badge in place so the search box keeps focus.
     const btn = this.shadowRoot.getElementById("filter-btn");
     if (btn) {
@@ -498,7 +511,7 @@ export class HakanbanPanel extends HTMLElement {
       return;
     }
     this._boardEl.swimlanes = loadLanes(board.id);
-    this._boardEl.filter = this._filter;
+    this._boardEl.filter = this._boardFilter();
     this._boardEl.board = board;
   }
 }

@@ -31,6 +31,7 @@ from .const import (
     CARD_TYPES,
     DEFAULT_LABELS,
     EVENT_BOARD_CHANGED,
+    EVENT_CARD_ASSIGNED,
     EVENT_CARD_COMPLETED,
     EVENT_CARD_CREATED,
     EVENT_CARD_DELETED,
@@ -100,6 +101,28 @@ def _normalize_background(value: Any) -> str | None:
 def _looks_done(title: Any) -> bool:
     """Default for a list's ``done`` flag: a list called "Done" completes its cards."""
     return str(title or "").strip().lower() == "done"
+
+
+_PERSON_RE = re.compile(r"^person\.[a-z0-9_]+$")
+
+
+def _clean_assignees(value: Any) -> list[str]:
+    """Keep well-formed ``person.*`` entity ids, de-duplicated, in order (for loading)."""
+    if not isinstance(value, list):
+        return []
+    return [p for p in dict.fromkeys(value) if isinstance(p, str) and _PERSON_RE.match(p)]
+
+
+def _validate_assignees(value: Any) -> list[str]:
+    """Return a clean, de-duplicated assignee list or raise HakanbanError."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise HakanbanError("assignees must be a list of person entity ids")
+    for p in value:
+        if not isinstance(p, str) or not _PERSON_RE.match(p):
+            raise HakanbanError(f"{p!r} is not a person entity id (person.<name>)")
+    return list(dict.fromkeys(value))
 
 
 def _undoable(method: Callable[..., _T]) -> Callable[..., _T]:
@@ -205,6 +228,7 @@ class HakanbanData:
             card.setdefault("epic_id", None)
             card.setdefault("column_entered", card.get("updated") or card.get("created") or _now())
             card.setdefault("blocked_by", [])
+            card["assignees"] = _clean_assignees(card.get("assignees"))
         # Drop dependencies on cards that no longer exist or live on another board.
         for card in self.cards.values():
             card["blocked_by"] = [
@@ -572,6 +596,24 @@ class HakanbanData:
                 {"board_id": card["board_id"], "column_id": card["column_id"], "card_id": card_id},
             )
 
+    # ``assignees`` are HA person entity ids. Each newly added one fires EVENT_CARD_ASSIGNED,
+    # carrying the person's HA user id (when the person has a login) for notifications.
+    def _fire_assigned(self, card: dict[str, Any], before: set[str]) -> None:
+        for person in card.get("assignees", []):
+            if person in before:
+                continue
+            user_id = None
+            states = getattr(self.hass, "states", None)
+            state = states.get(person) if states is not None else None
+            if state is not None:
+                user_id = state.attributes.get("user_id")
+            self.hass.bus.async_fire(
+                EVENT_CARD_ASSIGNED,
+                {"board_id": card["board_id"], "column_id": card["column_id"], "card_id": card["id"],
+                 "number": card["number"], "title": card["title"],
+                 "assignee": person, "user_id": user_id},
+            )
+
     def _depends_on(self, card_id: str, target_id: str) -> bool:
         """True if ``card_id`` is (transitively) blocked by ``target_id``."""
         seen: set[str] = set()
@@ -621,6 +663,7 @@ class HakanbanData:
             raise HakanbanError("Epics cannot be nested inside other epics")
         self._validate_epic_link(None, board["id"], epic_id)
         blocked_by = self._validate_blockers(None, board["id"], fields.get("blocked_by"))
+        assignees = _validate_assignees(fields.get("assignees"))
 
         board["card_seq"] = board.get("card_seq", 0) + 1
         existing = self.cards_in_column(column_id)
@@ -639,7 +682,7 @@ class HakanbanData:
             "description": fields.get("description", ""),
             "labels": list(fields.get("labels", [])),
             "blocked_by": blocked_by,
-            "assignees": list(fields.get("assignees", [])),
+            "assignees": assignees,
             "due": fields.get("due"),
             "due_complete": False,
             "status": STATUS_NEEDS_ACTION,
@@ -664,6 +707,7 @@ class HakanbanData:
         board = self._require_board(board_id)
         self._column(board, column_id)  # validate
         card = self._new_card(board, column_id, title, **fields)
+        self._fire_assigned(card, set())
         self._commit(
             board_id, EVENT_CARD_CREATED,
             {"board_id": board_id, "column_id": column_id, "card_id": card["id"], "title": card["title"]},
@@ -715,14 +759,18 @@ class HakanbanData:
             new_epic = None
         if new_epic is not None:
             self._validate_epic_link({**card, "card_type": new_type}, card["board_id"], new_epic)
+        assignees_before = set(card.get("assignees", []))
+        new_assignees = _validate_assignees(fields["assignees"]) if "assignees" in fields else None
         if "blocked_by" in fields:
             card["blocked_by"] = self._validate_blockers(card_id, card["board_id"], fields["blocked_by"])
+        if new_assignees is not None:
+            card["assignees"] = new_assignees  # null clears
         if card.get("card_type", CARD_TYPE_TASK) == CARD_TYPE_EPIC and new_type != CARD_TYPE_EPIC:
             self._unlink_epic_children(card_id)  # demoted: its children become free cards
         card["card_type"] = new_type
         card["epic_id"] = new_epic
 
-        for key in ("title", "description", "labels", "assignees", "archived"):
+        for key in ("title", "description", "labels", "archived"):
             if key in fields and fields[key] is not None:
                 card[key] = fields[key]
         # These can be explicitly cleared with null.
@@ -757,6 +805,7 @@ class HakanbanData:
             completed = want_done if want_done is not None else card.get("status") == STATUS_COMPLETED
         newly = self._set_completion(card, completed)
         self._fire_unblocked(blocked_before)
+        self._fire_assigned(card, assignees_before)
         event = EVENT_CARD_COMPLETED if newly else EVENT_CARD_UPDATED
         self._commit(
             card["board_id"], event,

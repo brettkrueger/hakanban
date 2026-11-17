@@ -203,6 +203,14 @@ a.hk-card-number:hover { color: var(--primary-color, #4f9dff); text-decoration: 
 .hk-label-chip.hk-sortable { cursor: grab; gap: 6px; padding-right: 4px; }
 .hk-label-chip.hk-sortable:focus-visible { outline: 2px solid var(--primary-color, #0079bf); outline-offset: 1px; }
 .hk-label-chip.dragging { opacity: .4; }
+.hk-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 22px; border-radius: 50%; object-fit: cover; color: #fff; font-size: .62rem; font-weight: 700; letter-spacing: .02em; line-height: 1; box-sizing: border-box; user-select: none; }
+.hk-avatar-sm { width: 18px; height: 18px; font-size: .55rem; }
+.hk-avatar-more { background: var(--hk-col-bg); color: var(--primary-text-color); }
+.hk-avatars { display: inline-flex; margin-left: auto; padding-left: 4px; }
+.hk-avatars .hk-avatar { box-shadow: 0 0 0 2px var(--hk-card-bg, var(--ha-card-background, #2d333b)); }
+.hk-avatars .hk-avatar + .hk-avatar { margin-left: -6px; }
+.hk-person-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 3px; border-radius: 12px; background: var(--hk-col-bg); font-size: .8rem; }
+.hk-person-chip.missing { opacity: .65; font-style: italic; }
 .hk-chip-x { border: 0; background: rgba(0, 0, 0, .15); color: inherit; border-radius: 4px; width: 18px; height: 18px; padding: 0; font-size: .7rem; line-height: 18px; cursor: pointer; }
 .hk-chip-x:hover { background: rgba(0, 0, 0, .3); }
 .hk-label-add { margin-top: 6px; }

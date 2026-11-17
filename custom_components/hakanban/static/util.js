@@ -175,16 +175,19 @@ export function emptyFilter() {
     type: "",         // "" | "task" | "epic"
     epic: "",         // "" | <epic card id> | "__none" (cards without an epic)
     deps: "",         // "" | "blocked" | "ready" (open, nothing blocking it) | "blocking"
+    assignee: "",     // "" | "__me" | "__none" | <person entity id>
   };
 }
 
 // How many filter dimensions are active (search excluded), for the toolbar badge.
 export function activeFilterCount(f) {
   if (!f) return 0;
-  return (f.labels?.size ? 1 : 0) + ["due", "status", "type", "epic", "deps"].filter((k) => f[k]).length;
+  return (f.labels?.size ? 1 : 0) + ["due", "status", "type", "epic", "deps", "assignee"].filter((k) => f[k]).length;
 }
 
-// `byId` (from cardIndex) is needed for the dependency filter.
+// `byId` (from cardIndex) is needed for the dependency filter. The host adds `f.me` (the
+// viewer's person entity id) for "Assigned to me", and `f.names` ({ person id: name }) so a
+// search also matches assignee names.
 export function cardMatchesFilter(card, f, byId) {
   if (!f) return true;
   const labels = card.labels || [];
@@ -214,9 +217,16 @@ export function cardMatchesFilter(card, f, byId) {
     if (f.deps === "ready" && !(open && !isBlocked(card, byId))) return false;
     if (f.deps === "blocking" && !(open && dependents(card, byId).some((d) => d.status !== "completed"))) return false;
   }
+  if (f.assignee) {
+    const who = card.assignees || [];
+    if (f.assignee === "__none" && who.length) return false;
+    if (f.assignee === "__me" && !(f.me && who.includes(f.me))) return false;
+    if (!f.assignee.startsWith("__") && !who.includes(f.assignee)) return false;
+  }
   const query = (f.query || "").toLowerCase();
   if (query) {
-    const hay = `${card.title} ${card.description || ""} #${card.number}`.toLowerCase();
+    const names = (card.assignees || []).map((p) => f.names?.[p] || "").join(" ");
+    const hay = `${card.title} ${card.description || ""} #${card.number} ${names}`.toLowerCase();
     if (!hay.includes(query)) return false;
   }
   return true;
@@ -256,12 +266,13 @@ export const SWIMLANE_MODES = [
   ["epic", "Epic"],
   ["label", "Label"],
   ["status", "Status"],
+  ["assignee", "Assignee"],
 ];
 
 // Lanes for a grouping mode. Each lane: { key, title, color?, match(card), preset }.
 // `preset` pre-fills the new-card dialog when adding a card from inside that lane.
 // A card may match several label lanes (it has several labels); every other mode is exclusive.
-export function swimlanes(board, mode) {
+export function swimlanes(board, mode, people = []) {
   if (!board || !mode || mode === "none") return null;
   if (mode === "type") {
     return [
@@ -313,6 +324,22 @@ export function swimlanes(board, mode) {
       },
     ];
   }
+  if (mode === "assignee") {
+    // A lane per person in HA, plus anyone assigned on this board who has since been removed.
+    const known = new Set(people.map((p) => p.id));
+    const extra = [...new Set(boardCards(board).flatMap((c) => c.assignees || []))]
+      .filter((id) => !known.has(id)).map((id) => personInfo(null, id));
+    return [
+      ...[...people, ...extra].map((p) => ({
+        key: p.id,
+        title: p.name,
+        person: p,
+        match: (c) => (c.assignees || []).includes(p.id),
+        preset: { assignees: [p.id] },
+      })),
+      { key: "__none", title: "Unassigned", match: (c) => !(c.assignees || []).length, preset: {} },
+    ];
+  }
   return null;
 }
 
@@ -333,7 +360,66 @@ export function swimlaneChanges(mode, card, from, to) {
     labels.add(to);
     return { labels: [...labels] };
   }
+  if (mode === "assignee") {
+    // Hand the card over: the lane's person replaces the one it was dragged from.
+    if (to === "__none") return { assignees: [] };
+    const who = (card.assignees || []).filter((p) => p !== from && p !== to);
+    return { assignees: [...who, to] };
+  }
   return null;
+}
+
+// ---- People ------------------------------------------------------------------
+// Cards are assigned to HA person entities (Settings → People). Their name and picture
+// come from hass.states, so nothing about a person is copied into the store.
+
+const AVATAR_COLORS = ["#0079bf", "#519839", "#b04632", "#89609e", "#cd5a91", "#00aecc", "#d29034", "#4bbf6b", "#838c91"];
+
+function prettyId(id) {
+  return String(id || "").replace(/^person\./, "").replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
+export function personInfo(hass, id) {
+  const st = hass?.states?.[id];
+  const name = st?.attributes?.friendly_name || prettyId(id);
+  return { id, name, picture: st?.attributes?.entity_picture || "", userId: st?.attributes?.user_id || null, missing: !st };
+}
+
+// Every person in HA, sorted by name.
+export function peopleList(hass) {
+  return Object.keys(hass?.states || {})
+    .filter((id) => id.startsWith("person."))
+    .map((id) => personInfo(hass, id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// A cheap fingerprint so views only re-render when people actually change (hass is
+// replaced on every state change in HA).
+export function peopleKey(hass) {
+  return peopleList(hass).map((p) => `${p.id}|${p.name}|${p.picture}|${p.userId}`).join(";");
+}
+
+// The viewer's own person entity (the person linked to their HA user), or null.
+export function myPersonId(hass) {
+  const uid = hass?.user?.id;
+  if (!uid) return null;
+  return peopleList(hass).find((p) => p.userId === uid)?.id || null;
+}
+
+export function initials(name) {
+  const parts = String(name || "?").trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || "?") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
+}
+
+export function avatarHtml(person, extraClass = "") {
+  const tip = escapeHtml(person.name + (person.missing ? " (no longer in Home Assistant)" : ""));
+  if (person.picture) {
+    return `<img class="hk-avatar ${extraClass}" src="${escapeHtml(person.picture)}" alt="${escapeHtml(person.name)}" title="${tip}" loading="lazy">`;
+  }
+  let h = 0;
+  for (const ch of person.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const bg = AVATAR_COLORS[h % AVATAR_COLORS.length];
+  return `<span class="hk-avatar ${extraClass}" style="background:${bg}" title="${tip}" aria-label="${escapeHtml(person.name)}">${escapeHtml(initials(person.name))}</span>`;
 }
 
 // ---- Deep links -------------------------------------------------------------

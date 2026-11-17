@@ -165,7 +165,7 @@ const handlers = {
     b.columns.forEach((c, i) => (c.order = i * 1000));
     return { ok: true };
   },
-  create_card: ({ board_id, column_id, title, description, labels, due, card_type, epic_id, blocked_by }) => {
+  create_card: ({ board_id, column_id, title, description, labels, due, card_type, epic_id, blocked_by, assignees }) => {
     const b = findBoard(board_id);
     const col = b.columns.find((c) => c.id === column_id);
     const card = {
@@ -173,7 +173,7 @@ const handlers = {
       number: allCards().length + 1, card_type: card_type || "task", epic_id: epic_id || null,
       blocked_by: blocked_by || [],
       title, description: description || "",
-      labels: labels || [], assignees: [], due: due || null, due_complete: false,
+      labels: labels || [], assignees: [...new Set(assignees || [])], due: due || null, due_complete: false,
       status: "needs_action", checklists: [], comments: [], cover: null, archived: false,
     };
     col.cards.push(card);
@@ -187,6 +187,7 @@ const handlers = {
   update_card: ({ card_id, status, due_complete, ...fields }) => {
     const [board, col, card] = findCard(card_id);
     if ("blocked_by" in fields) fields.blocked_by = [...new Set(fields.blocked_by || [])];
+    if ("assignees" in fields) fields.assignees = [...new Set(fields.assignees || [])];
     Object.assign(card, fields);
     if (status !== undefined) {
       const dc = doneCols(board);
@@ -329,6 +330,13 @@ window.__mockHass = {
       return Promise.resolve(() => {});
     },
   },
-  states: {},
+  // HA people (person.* entities); the viewer is linked to person.alex.
+  states: {
+    "person.alex": { entity_id: "person.alex", state: "home", attributes: { friendly_name: "Alex Rivera", user_id: "u-alex" } },
+    "person.sam": { entity_id: "person.sam", state: "not_home", attributes: { friendly_name: "Sam", user_id: "u-sam" } },
+    "person.jo": { entity_id: "person.jo", state: "home", attributes: { friendly_name: "Jo Park" } },
+    "light.kitchen": { entity_id: "light.kitchen", state: "on", attributes: { friendly_name: "Kitchen" } },
+  },
+  user: { id: "u-alex", name: "Alex Rivera" },
   themes: {},
 };

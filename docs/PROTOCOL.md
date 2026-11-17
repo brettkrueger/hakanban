@@ -38,7 +38,7 @@ frontend (panel + Lovelace card). Everything below is the source of truth.
       "description": "",               // markdown
       "labels": ["<label_id>", ...],   // ordered: the board shows them in this order
       "blocked_by": ["<card_id>", ...], // cards on the same board that must be finished first
-      "assignees": ["person.neil", ...],
+      "assignees": ["person.neil", ...], // HA person entity ids (see Assignees)
       "due": null,                     // iso8601 or null
       "due_complete": false,           // deprecated: mirrors status == completed
       "status": "needs_action",        // "needs_action" | "completed"
@@ -107,9 +107,9 @@ optimistic update and reconcile on the next push.
 | `hakanban/update_column` | `board_id`, `column_id`, `title?`, `archived?`, `auto_archive_days?` (int ≥ 0; 0/null = off), `done?` (bool) | column |
 | `hakanban/delete_column` | `board_id`, `column_id` | `{deleted: column_id}` |
 | `hakanban/move_column` | `board_id`, `column_id`, `position` (int) | `{ok: true}` |
-| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?` | card |
+| `hakanban/create_card` | `board_id`, `column_id`, `title`, `description?`, `labels?`, `due?`, `card_type?`, `epic_id?`, `blocked_by?`, `assignees?` | card |
 | `hakanban/paste_cards` | `board_id`, `column_id`, `text` (newline-separated) **or** `titles[]` | `{cards:[…]}` |
-| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/status/cover/archived/card_type/epic_id/blocked_by` (`due`, `cover`, `epic_id`, `blocked_by` accept `null` to clear; legacy `due_complete` is an alias for `status`) | card |
+| `hakanban/update_card` | `card_id`, any of `title/description/labels/assignees/due/status/cover/archived/card_type/epic_id/blocked_by` (`due`, `cover`, `epic_id`, `blocked_by`, `assignees` accept `null` to clear; legacy `due_complete` is an alias for `status`) | card |
 | `hakanban/move_card` | `card_id`, `to_column`, `position?` (int), `to_board?` | card |
 | `hakanban/delete_card` | `card_id` | `{deleted: card_id}` |
 | `hakanban/create_label` | `board_id`, `name`, `color` | label |
@@ -178,6 +178,21 @@ excluding archived cards that were never completed; done = `status == "completed
 On load, `blocked_by` is back-filled to `[]` and ids that are missing, the card itself, or on
 another board are dropped.
 
+### Assignees
+
+`assignees` holds HA **person** entity ids (`person.<name>`), in order, de-duplicated.
+Anything else is refused with `HakanbanError` (nothing is changed). Existence isn't
+checked, so a person removed from HA stays on their cards; the frontend shows their name
+from the id, greyed out. Names and pictures are never stored: the frontend reads them from
+`hass.states[person.*]`, and treats the person whose `user_id` matches `hass.user.id` as
+"me".
+
+`hakanban_card_assigned` fires once for each person **newly** added (on `create_card` or
+`update_card`; reordering or re-sending the same people fires nothing), with the person's
+`user_id` attribute (`null` for a person without an HA login).
+
+On load, `assignees` is back-filled to `[]` and malformed entries are dropped.
+
 ### Card references
 
 `#<number>` in a card's title, description, comments or checklist items is rendered by the
@@ -244,14 +259,15 @@ undo step. A sweep that archives cards is one undo step; an empty sweep changes 
 | `hakanban_card_moved` | `board_id`, `card_id`, `from_column`, `to_column` |
 | `hakanban_card_completed` | `board_id`, `card_id`, `column_id` |
 | `hakanban_card_unblocked` | `board_id`, `card_id`, `column_id` |
+| `hakanban_card_assigned` | `board_id`, `card_id`, `column_id`, `number`, `title`, `assignee`, `user_id` |
 | `hakanban_card_deleted` | `board_id`, `card_id` |
 | `hakanban_board_changed` | `board_id`, `action` |
 
 ## Services (`hakanban.*`)
 
 `add_card` (board_id, column_id, title, description?, labels?, due?, card_type?, epic_id?,
-blocked_by?), `move_card` (card_id, to_column, position?), `update_card` (card_id, title?,
-description?, labels?, due?, status?, archived?, card_type?, epic_id?, blocked_by?), `add_comment` (card_id, text),
+blocked_by?, assignees?), `move_card` (card_id, to_column, position?), `update_card` (card_id, title?,
+description?, labels?, due?, status?, archived?, card_type?, epic_id?, blocked_by?, assignees?), `add_comment` (card_id, text),
 `create_board` (title), `create_column` (board_id, title). Plus the native `todo.*` services on
 each column entity (Assist / voice).
 
