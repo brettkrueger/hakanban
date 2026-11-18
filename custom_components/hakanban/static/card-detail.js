@@ -13,7 +13,9 @@ import {
   boardEpics,
   epicChildren,
   epicProgress,
-  renderRefs,
+  renderText,
+  previewsHtml,
+  hydratePreviews,
   cardIndex,
   openBlockers,
   dependents,
@@ -154,7 +156,7 @@ export class HakanbanCardDetail extends HTMLElement {
             return `<div class="hk-check-item ${i.done ? "done" : ""}" draggable="true" data-item="${key}">
                 <span class="hk-drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
                 <input type="checkbox" data-check="${key}" ${i.done ? "checked" : ""} aria-label="Done">
-                <span class="hk-check-text" tabindex="0" data-item-text="${key}" data-keep="item-${key}" title="Click to edit · Alt+↑/↓ to move">${renderRefs(i.text, b)}</span>
+                <span class="hk-check-text" tabindex="0" data-item-text="${key}" data-keep="item-${key}" title="Click to edit · Alt+↑/↓ to move">${renderText(i.text, b)}</span>
                 <button class="hk-icon-btn" data-item-delete="${key}" title="Delete item" aria-label="Delete item">✕</button>
               </div>`;
           })
@@ -175,11 +177,12 @@ export class HakanbanCardDetail extends HTMLElement {
     const commentsHtml = (c.comments || [])
       .slice()
       .reverse()
-      .map(
-        (cm) =>
-          `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div>${renderRefs(cm.text, b)}</div></div>`
-      )
+      .map((cm) => {
+        const text = renderText(cm.text, b);
+        return `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div>${text}</div>${previewsHtml(text)}</div>`;
+      })
       .join("");
+    const descHtml = renderMarkdown(c.description, b);
 
     const columnsOptions = (b.columns || [])
       .map((col) => `<option value="${col.id}" ${col.id === c.column_id ? "selected" : ""}>${escapeHtml(col.title)}</option>`)
@@ -295,7 +298,8 @@ export class HakanbanCardDetail extends HTMLElement {
               this._editingDesc
                 ? `<textarea class="hk-desc-edit" id="hk-desc" data-keep="desc">${escapeHtml(c.description || "")}</textarea>
                    <div class="hk-row" style="margin-top:6px"><button class="hk-btn" id="hk-desc-save">Save</button><button class="hk-btn secondary" id="hk-desc-cancel">Cancel</button></div>`
-                : `<div class="hk-desc-render" id="hk-desc-render">${renderMarkdown(c.description, b) || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>`
+                : `<div class="hk-desc-render" id="hk-desc-render">${descHtml || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>
+                   ${previewsHtml(descHtml)}`
             }
           </div>
 
@@ -319,6 +323,7 @@ export class HakanbanCardDetail extends HTMLElement {
 
     this._rendering = false;
     this._wire();
+    hydratePreviews(this.shadowRoot, this._api);
     const kept = keep && this.shadowRoot.querySelector(`[data-keep="${keep.key}"]`);
     if (kept) {
       if ("value" in kept) kept.value = keep.value;
@@ -557,7 +562,8 @@ export class HakanbanCardDetail extends HTMLElement {
         this.render();
       });
     } else {
-      $("#hk-desc-render").addEventListener("click", () => {
+      $("#hk-desc-render").addEventListener("click", (e) => {
+        if (e.target.closest("a[href]")) return;
         this._editingDesc = true;
         this.render();
       });
@@ -607,7 +613,7 @@ export class HakanbanCardDetail extends HTMLElement {
     });
     root.querySelectorAll("[data-item-text]").forEach((el) => {
       const startEdit = () => { this._editItem = el.dataset.itemText; this.render(); };
-      el.addEventListener("click", (e) => { if (!e.target.closest("[data-ref]")) startEdit(); });
+      el.addEventListener("click", (e) => { if (!e.target.closest("[data-ref], a[href]")) startEdit(); });
       el.addEventListener("keydown", (e) => {
         const { clId, itemId, cl } = findItem(el.dataset.itemText);
         if (e.key === "Enter") { e.preventDefault(); startEdit(); }

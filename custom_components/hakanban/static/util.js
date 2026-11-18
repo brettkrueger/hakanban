@@ -21,6 +21,7 @@ export function renderMarkdown(text, board) {
     /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
     '<a href="$2" target="_blank" rel="noopener">$1</a>'
   );
+  html = linkUrls(html);
   // unordered lists
   html = html.replace(/(?:^|\n)[-*] (.+)/g, "\n<li>$1</li>");
   html = html.replace(/(<li>[\s\S]*?<\/li>)/g, "<ul>$1</ul>");
@@ -31,6 +32,146 @@ export function renderMarkdown(text, board) {
 // Plain text (comments, checklist items, titles) with "#12" references linked.
 export function renderRefs(text, board) {
   return linkCardRefs(escapeHtml(text), board);
+}
+
+// Plain text with web addresses and "#12" references linked (comments, checklist items).
+export function renderText(text, board) {
+  return linkCardRefs(linkUrls(escapeHtml(text)), board);
+}
+
+// ---- web links and their previews ------------------------------------------
+
+// A bare address in escaped text: stops at whitespace, tags and escaped quotes / angle
+// brackets (but keeps "&amp;", which is part of many query strings).
+const URL_RE = /(&lt;)?(https?:\/\/(?:(?!&(?:lt|gt|quot|#39);)[^\s<])+)(&gt;)?/g;
+
+// Turn bare http(s) addresses in already-escaped HTML into links, skipping existing tags,
+// links and code. Trailing punctuation stays outside the link ("see https://x.com.").
+// Like Discord, an address written in angle brackets ("<https://x.com>") is linked but
+// gets no preview.
+export function linkUrls(html) {
+  if (!html || !html.includes("http")) return html;
+  return html
+    .split(/(<code>[\s\S]*?<\/code>|<a\b[\s\S]*?<\/a>|<[^>]+>)/)
+    .map((part, i) => {
+      if (i % 2) return part;
+      return part.replace(URL_RE, (m, open, url, close) => {
+        let tail = "";
+        if (!(open && close)) {
+          if (close) { tail = close; close = ""; }
+          let cut;
+          while ((cut = url.match(/[.,;:!?'"]$|\)$/)) && !(cut[0] === ")" && balanced(url))) {
+            tail = cut[0] + tail;
+            url = url.slice(0, -1);
+          }
+        }
+        const quiet = open && close;
+        return `${quiet ? "" : open || ""}<a href="${url}" target="_blank" rel="noopener noreferrer"${quiet ? " data-noembed" : ""}>${url}</a>${tail}`;
+      });
+    })
+    .join("");
+}
+
+const balanced = (url) => (url.match(/\(/g) || []).length >= (url.match(/\)/g) || []).length;
+
+// Addresses in rendered HTML worth previewing: http(s) links (not "<…>" ones, not this
+// Home Assistant), de-duplicated, at most `max`.
+export function previewUrls(html, max = 3) {
+  const urls = [];
+  for (const m of String(html || "").matchAll(/<a href="(https?:\/\/[^"]+)"([^>]*)>/g)) {
+    if (m[2].includes("data-noembed")) continue;
+    const url = m[1].replace(/&amp;/g, "&");
+    try {
+      if (new URL(url).origin === location.origin) continue;
+    } catch (_) {
+      continue;
+    }
+    if (!urls.includes(url)) urls.push(url);
+    if (urls.length >= max) break;
+  }
+  return urls;
+}
+
+// url -> { state: "loading" | "ok" | "none", data, promise }, shared by every view.
+const previews = new Map();
+
+// Fetch (once per page load) the preview for `url`; resolves when it's known either way.
+export function loadPreview(api, url) {
+  let entry = previews.get(url);
+  if (!entry) {
+    // Stored before asking, so a re-render while the request is out doesn't ask again.
+    entry = { state: "loading" };
+    previews.set(url, entry);
+    entry.promise = Promise.resolve()
+      .then(() => api.linkPreview(url))
+      .then(
+        (data) => Object.assign(entry, { state: "ok", data }),
+        () => Object.assign(entry, { state: "none" })
+      );
+  }
+  return entry.promise;
+}
+
+// The preview block for `url`: the card if it's loaded, nothing if there's none, and a
+// placeholder (filled by hydratePreviews) while it loads.
+export function previewHtml(url) {
+  const entry = previews.get(url);
+  if (entry?.state === "none") return "";
+  if (entry?.state !== "ok") return `<div class="hk-embed loading" data-embed-url="${escapeHtml(url)}"></div>`;
+  const p = entry.data;
+  const href = escapeHtml(url);
+  const img = (cls) =>
+    p.image && /^https?:\/\//i.test(p.image)
+      ? `<img class="${cls}" src="${escapeHtml(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+      : "";
+  if (p.kind === "image") {
+    return `<a class="hk-embed-image" href="${href}" target="_blank" rel="noopener noreferrer">${img("hk-embed-img")}</a>`;
+  }
+  const color = /^#[0-9a-f]{3,8}$/i.test(p.color || "") ? ` style="border-left-color:${p.color}"` : "";
+  const icon = p.icon && /^https?:\/\//i.test(p.icon)
+    ? `<img class="hk-embed-icon" src="${escapeHtml(p.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
+    : "";
+  return `<div class="hk-embed${p.large ? " large" : ""}"${color}>
+    <div class="hk-embed-body">
+      <div class="hk-embed-site">${icon}${escapeHtml(p.site_name || "")}</div>
+      ${p.title ? `<a class="hk-embed-title" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.title)}</a>` : ""}
+      ${p.description ? `<div class="hk-embed-desc">${escapeHtml(p.description)}</div>` : ""}
+    </div>
+    ${img("hk-embed-img")}
+  </div>`;
+}
+
+// Previews for every address in a rendered block of text.
+export function previewsHtml(html) {
+  const urls = previewUrls(html);
+  return urls.length ? `<div class="hk-embeds">${urls.map(previewHtml).join("")}</div>` : "";
+}
+
+// Fetch the previews behind any placeholders under `root` and swap them in as they
+// arrive. Images that fail to load are removed rather than shown broken.
+export function hydratePreviews(root, api) {
+  hideBrokenImages(root);
+  for (const el of root.querySelectorAll(".hk-embed.loading[data-embed-url]")) {
+    const url = el.dataset.embedUrl;
+    loadPreview(api, url).then(() => {
+      for (const ph of root.querySelectorAll(".hk-embed.loading[data-embed-url]")) {
+        if (ph.dataset.embedUrl !== url) continue;
+        const tpl = document.createElement("template");
+        tpl.innerHTML = previewHtml(url);
+        hideBrokenImages(tpl.content);
+        ph.replaceWith(tpl.content);
+      }
+    });
+  }
+}
+
+function hideBrokenImages(root) {
+  for (const img of root.querySelectorAll(".hk-embed-img, .hk-embed-icon")) {
+    img.addEventListener("error", () => {
+      const wrap = img.closest(".hk-embed-image");
+      (wrap || img).remove();
+    }, { once: true });
+  }
 }
 
 // ---- card references ("#12") ---------------------------------------------

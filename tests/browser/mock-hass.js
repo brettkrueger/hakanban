@@ -306,6 +306,34 @@ const handlers = {
   },
 };
 
+// Canned link previews (the real backend fetches the page). Anything else has none.
+const ICON = "http://localhost:8765/custom_components/hakanban/brand/icon.png";
+const PREVIEWS = {
+  "https://example.com/article": {
+    kind: "page", title: "An example article", description: "What the article is about, in a sentence or two.",
+    image: ICON, site_name: "Example News", icon: ICON, color: "#ff8800", large: false,
+  },
+  "https://video.example.com/watch?v=1&t=2": {
+    kind: "page", title: "A video", description: "Watch this.", image: ICON,
+    site_name: "VideoSite", icon: ICON, color: null, large: true,
+  },
+  "https://img.example.com/cat.png": {
+    kind: "image", title: null, description: null, image: ICON, site_name: "img.example.com", icon: null, color: null, large: true,
+  },
+  "https://broken.example.com/": {
+    kind: "page", title: "Broken image", description: null, image: "http://localhost:8765/missing.png",
+    site_name: "broken.example.com", icon: null, color: null, large: false,
+  },
+};
+window.__previewCalls = [];
+handlers.link_preview = ({ url }) => {
+  window.__previewCalls.push(url);
+  const p = PREVIEWS[url];
+  return new Promise((res, rej) =>
+    setTimeout(() => (p ? res({ url, ...p }) : rej({ code: "no_preview", message: "no preview" })), 50)
+  );
+};
+
 window.__hkLog = [];
 
 window.__mockHass = {

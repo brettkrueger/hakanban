@@ -59,6 +59,13 @@ v1 ships the **Core + multi-line paste** scope:
   **☰ Lanes → Assignee** gives each person a row: drag a card into someone's row to hand it
   over. Assigning someone fires `hakanban_card_assigned` with their HA `user_id`, so an
   automation can notify them.
+- **Link previews** — web addresses in a card's description, comments and checklist items
+  become links (no markdown needed), and those in the description and comments get a
+  preview underneath, like Slack or Discord: the site, the page's title and description, and
+  its picture. A link straight to an image shows the image. Up to three previews per
+  description or comment; write an address in angle brackets (`<https://…>`) to link it
+  without a preview. Home Assistant fetches the page, so it only previews **public** sites:
+  addresses on your own network (and anything behind a login, like Jira) just stay plain links.
 - **Dependencies** — mark a card as **blocked by** other cards on the same board from the
   card view's *Dependencies* section (or the new card dialog). Blocked cards get a red edge
   and a ⛔ badge listing what they're waiting on; cards holding others up get a ⛓ badge with
@@ -321,6 +328,7 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 
 - [x] Checklists — add, rename, delete, edit, tick and reorder from the card view
 - [ ] Attachments
+- [x] Link previews — rich previews of web links in descriptions and comments
 - [ ] Card / board templates
 - [x] Swimlanes — group the board by type, epic, label, status or assignee
 - [x] Assignees — assign cards to Home Assistant people

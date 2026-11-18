@@ -105,6 +105,10 @@ export class HakanbanApi {
   deleteCheckItem(card_id, checklist_id, item_id) {
     return this._send("delete_check_item", { card_id, checklist_id, item_id });
   }
+  // Title / description / image for a web page, fetched by HA. Rejects when there's none.
+  linkPreview(url) {
+    return this._send("link_preview", { url });
+  }
   moveCheckItem(card_id, checklist_id, item_id, position, to_checklist) {
     const msg = { card_id, checklist_id, item_id, position };
     if (to_checklist && to_checklist !== checklist_id) msg.to_checklist = to_checklist;

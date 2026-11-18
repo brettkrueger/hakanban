@@ -124,6 +124,7 @@ optimistic update and reconcile on the next push.
 | `hakanban/update_check_item` | `card_id`, `checklist_id`, `item_id`, `text?` (non-blank), `done?` | item |
 | `hakanban/delete_check_item` | `card_id`, `checklist_id`, `item_id` | `{deleted: item_id}` |
 | `hakanban/move_check_item` | `card_id`, `checklist_id`, `item_id`, `position` (int ≥ 0, clamped), `to_checklist?` (another checklist on the same card) | item |
+| `hakanban/link_preview` | `url` (≤ 2048 chars) | preview (see Link previews), or error `no_preview` |
 
 The subscription push message body is the full payload `{ "boards": [...] }`.
 
@@ -199,6 +200,34 @@ On load, `assignees` is back-filled to `[]` and malformed entries are dropped.
 frontend as a link to the card with that number on the same board. It's display-only: nothing
 is stored. Numbers without a matching card, `code` spans, links/URL fragments and HTML
 entities are left as text.
+
+### Link previews
+
+The frontend links bare `http(s)://` addresses in descriptions, comments and checklist items,
+and shows a preview under descriptions and comments for up to 3 distinct addresses each
+(not ones written `<https://…>`, and not this HA instance's own URLs). Nothing is stored on
+the card: `hakanban/link_preview` fetches the page on demand and returns
+
+```jsonc
+{
+  "kind": "page",            // or "image" when the URL is an image itself
+  "url": "https://…",        // after redirects
+  "title": "…", "description": "…",   // og:/twitter: tags, else <title> / meta description
+  "image": "https://…",      // og:image / twitter:image, absolute; or null
+  "site_name": "…",          // og:site_name, else the host
+  "icon": "https://…",       // <link rel=icon>, else /favicon.ico
+  "color": "#rrggbb",        // theme-color, or null
+  "large": false             // twitter:card is summary_large_image (show the image big)
+}
+```
+
+Only `http`/`https` URLs on **public** addresses are fetched: a literal private, loopback,
+link-local or CGNAT IP is refused, and the connector's resolver drops such addresses for
+hostnames (on every redirect, up to 5), so internal hosts can't be probed through it. At most
+1 MB of an HTML page is read, with a 10 s timeout. A page with neither title nor description,
+a non-200 response, or any other content type gives `no_preview`. Results are cached in
+memory (6 h; failures 10 min; 256 entries). The browser loads the preview's image and icon
+straight from the site (`referrerpolicy=no-referrer`); ones that fail to load are hidden.
 
 ### Panel URLs
 

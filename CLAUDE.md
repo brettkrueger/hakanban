@@ -59,6 +59,8 @@ tests/             # plain `python3 tests/*.py` (HA is stubbed, real package mod
 
 - Run: `python3 tests/test_logic.py` and `python3 tests/test_calendar.py` (no pytest, no HA install —
   they stub `homeassistant.*` and load the real package modules via importlib).
+- `python3 tests/test_link_preview.py` needs `aiohttp` (any venv with it installed; HA isn't
+  needed): it fetches from a real local aiohttp server.
 - `tests/browser/` is a manual mock-hass harness for poking the panel in a browser.
 - Backend/logic changes: add a `check(...)` to `test_logic.py`. Frontend-only changes can't be unit
   tested here — run the suites anyway to prove the backend is intact, and say so.
