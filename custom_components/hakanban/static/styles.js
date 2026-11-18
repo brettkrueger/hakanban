@@ -165,6 +165,18 @@ a.hk-card-number:hover { color: var(--primary-color, #4f9dff); text-decoration: 
 .hk-embed > .hk-embed-img { width: 80px; height: 80px; object-fit: cover; border-radius: 4px; flex: none; }
 .hk-embed.large { flex-direction: column; }
 .hk-embed.large > .hk-embed-img { width: 100%; height: auto; max-height: 260px; }
+.hk-embed-play { position: relative; display: block; flex: none; padding: 0; border: 0; border-radius: 4px; overflow: hidden; cursor: pointer; background: #000; min-height: 120px; }
+.hk-embed.large > .hk-embed-play { width: 100%; }
+.hk-embed-play .hk-embed-img { display: block; width: 100%; max-height: 260px; object-fit: cover; }
+.hk-play-icon { position: absolute; inset: 0; margin: auto; width: 56px; height: 40px; display: grid; place-items: center; border-radius: 10px; background: rgba(0,0,0,.7); color: #fff; font-size: 20px; }
+.hk-embed-play:hover .hk-play-icon, .hk-embed-play:focus-visible .hk-play-icon { background: #e62117; }
+.hk-video { aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; }
+.hk-video iframe, .hk-video video { width: 100%; height: 100%; border: 0; display: block; }
+.hk-card-preview { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: .75rem; color: var(--hk-subtle); text-decoration: none; min-width: 0; }
+.hk-card-preview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hk-card-preview:hover span { text-decoration: underline; color: var(--primary-color, #4f9dff); }
+.hk-card-preview.loading { display: none; }
+.hk-card-cover { display: block; width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; margin: 4px 0; }
 .hk-embed-image { display: inline-block; max-width: 520px; }
 .hk-embed-image .hk-embed-img { display: block; max-width: 100%; max-height: 300px; border-radius: 6px; }
 .hk-modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }

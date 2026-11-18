@@ -210,24 +210,41 @@ the card: `hakanban/link_preview` fetches the page on demand and returns
 
 ```jsonc
 {
-  "kind": "page",            // or "image" when the URL is an image itself
+  "kind": "page",            // "image" / "video" when the URL is an image / video file itself
   "url": "https://…",        // after redirects
   "title": "…", "description": "…",   // og:/twitter: tags, else <title> / meta description
-  "image": "https://…",      // og:image / twitter:image, absolute; or null
+  "image": "/api/hakanban/preview_image?url=…&authSig=…",  // og:image / twitter:image; or null
+  "video": "https://…",      // the video file (kind "video" only), else null
   "site_name": "…",          // og:site_name, else the host
-  "icon": "https://…",       // <link rel=icon>, else /favicon.ico
+  "icon": "/api/hakanban/preview_image?url=…&authSig=…",   // <link rel=icon>, else /favicon.ico
   "color": "#rrggbb",        // theme-color, or null
   "large": false             // twitter:card is summary_large_image (show the image big)
 }
 ```
 
+`image` and `icon` are **signed HA paths** (`async_sign_path`, valid 24 h, for the asking
+user) to `GET /api/hakanban/preview_image?url=<image url>`, which fetches the image through
+the same guard and serves it (PNG/JPEG/GIF/WebP/AVIF/BMP/ICO only — no SVG, since it could
+run script on HA's origin; ≤ 5 MB; `nosniff`, `CSP: sandbox`, `Cache-Control: private`).
+Anything else gives 404. So viewers' browsers never contact the linked site for a preview.
+
 Only `http`/`https` URLs on **public** addresses are fetched: a literal private, loopback,
 link-local or CGNAT IP is refused, and the connector's resolver drops such addresses for
-hostnames (on every redirect, up to 5), so internal hosts can't be probed through it. At most
-1 MB of an HTML page is read, with a 10 s timeout. A page with neither title nor description,
-a non-200 response, or any other content type gives `no_preview`. Results are cached in
-memory (6 h; failures 10 min; 256 entries). The browser loads the preview's image and icon
-straight from the site (`referrerpolicy=no-referrer`); ones that fail to load are hidden.
+hostnames (on every redirect, up to 5), so internal hosts can't be probed through it. The
+integration's **options** (`preview_hosts`, one entry per line) widen that: a listed
+hostname (`gitea.lan`) or wildcard (`*.home.example`, subdomains only) may resolve to any
+address, and a listed IP or network (`192.168.1.0/24`) admits any hostname resolving into
+it. Changing the options clears the cache. At most 1 MB of an HTML page is read, with a
+10 s timeout. A page with neither title nor description, a non-200 response, or any other
+content type gives `no_preview`. Results are cached in memory (6 h; failures 10 min; 256
+entries).
+
+Frontend: YouTube (`watch`, `youtu.be`, `shorts`, `live`) and Vimeo links, and `kind:
+"video"` previews, get a ▶ button that opens a player dialog (outside the card view, so live
+pushes don't restart it): `youtube-nocookie.com/embed/<id>?autoplay=1[&start=<t>]`,
+`player.vimeo.com/video/<id>`, or a `<video>` for files, which load from the site directly.
+On the board, a card shows the first previewable link in its description as a one-line
+link (an image link as the card's cover).
 
 ### Panel URLs
 

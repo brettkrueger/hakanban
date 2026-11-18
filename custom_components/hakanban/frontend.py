@@ -20,6 +20,8 @@ from .const import (
     STATIC_URL_BASE,
 )
 
+from .previews import PreviewImageView
+
 _LOGGER = logging.getLogger(__name__)
 
 _FRONTEND_READY = f"{DOMAIN}_frontend_ready"
@@ -37,6 +39,7 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         # Auto-load the Lovelace card everywhere so `type: custom:hakanban-card`
         # works without the user manually registering a dashboard resource.
         frontend.add_extra_js_url(hass, f"{STATIC_URL_BASE}/{CARD_JS_FILENAME}")
+        hass.http.register_view(PreviewImageView())
         hass.data[_FRONTEND_READY] = True
 
     # Register the full-page sidebar panel (idempotent — remove first if present).

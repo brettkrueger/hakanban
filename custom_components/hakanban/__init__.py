@@ -12,6 +12,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from .const import AUTO_ARCHIVE_INTERVAL_MINUTES, DATA_MANAGER, DATA_UNSUB, DOMAIN
 from .data import HakanbanData
 from .frontend import async_register_frontend, async_unregister_panel
+from .previews import async_apply_options
 from .services import async_setup_services, async_unload_services
 from .store import HakanbanStore
 from .websocket_api import async_register_websocket_api
@@ -27,6 +28,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     domain_data[DATA_MANAGER] = manager
+
+    # Link previews: the allow-list of hosts on your network, kept current from the options.
+    async_apply_options(hass, entry)
+
+    async def _options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        async_apply_options(hass, entry)
+
+    entry.async_on_unload(entry.add_update_listener(_options_updated))
 
     # Websocket API (panel + Lovelace card talk to this).
     async_register_websocket_api(hass)

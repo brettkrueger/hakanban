@@ -17,6 +17,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from .const import CARD_TYPES, DATA_MANAGER, DOMAIN, SIGNAL_BOARDS_UPDATED
 from .data import HakanbanData, HakanbanError
 from .link_preview import LinkPreviewError, async_fetch_preview
+from .previews import preview_policy, proxied
 
 
 def _manager(hass: HomeAssistant) -> HakanbanData:
@@ -462,11 +463,11 @@ def ws_move_check_item(hass, connection, msg, manager: HakanbanData):
 @websocket_api.async_response
 async def ws_link_preview(hass: HomeAssistant, connection: Any, msg: dict[str, Any]) -> None:
     try:
-        preview = await async_fetch_preview(msg["url"])
+        preview = await async_fetch_preview(msg["url"], policy=preview_policy(hass))
     except LinkPreviewError as err:
         connection.send_error(msg["id"], "no_preview", str(err))
         return
-    connection.send_result(msg["id"], preview)
+    connection.send_result(msg["id"], proxied(preview, connection.refresh_token_id, hass))
 
 
 _COMMANDS = (

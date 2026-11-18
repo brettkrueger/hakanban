@@ -2,7 +2,7 @@
 // directly and relies on the live subscription to refresh the board behind it.
 
 import { STYLES } from "./styles.js";
-import { openLabelManager } from "./dialogs.js";
+import { openLabelManager, openVideoPlayer } from "./dialogs.js";
 import {
   escapeHtml,
   renderMarkdown,
@@ -34,6 +34,11 @@ export class HakanbanCardDetail extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._editingDesc = false;
+    // A preview's ▶ (added by render or later, as previews load) opens the video player.
+    this.shadowRoot.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-play]");
+      if (btn) openVideoPlayer(btn.dataset.play, btn.dataset.playKind, btn.dataset.playTitle);
+    });
   }
 
   setContext({ card, board, api, hass, onClose, onOpenCard }) {

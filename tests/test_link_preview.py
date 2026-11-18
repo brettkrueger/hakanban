@@ -20,6 +20,7 @@ spec = importlib.util.spec_from_file_location(
     "link_preview", os.path.join(REPO, "custom_components", "hakanban", "link_preview.py")
 )
 lp = importlib.util.module_from_spec(spec)
+sys.modules["link_preview"] = lp  # dataclasses look their module up
 spec.loader.exec_module(lp)
 
 FAILED = []
@@ -108,9 +109,30 @@ for addr, ok in [
     check(f"is_public_address {addr}", lp.is_public_address(ipaddress.ip_address(addr)) is ok)
 
 
+# ------------------------------------------------------------- allow-list policy
+pol = lp.Policy.from_text("gitea.lan, *.home.example\n192.168.1.0/24  10.0.0.7\n")
+ip = ipaddress.ip_address
+check("policy: public address allowed", pol.allows("example.com", ip("8.8.8.8")))
+check("policy: listed host may be private", pol.allows("gitea.lan", ip("10.9.9.9")))
+check("policy: host match ignores case and trailing dot", pol.allows("Gitea.LAN.", ip("10.9.9.9")))
+check("policy: wildcard matches subdomains", pol.allows("wiki.home.example", ip("10.9.9.9")) and pol.allows("a.b.home.example", ip("10.9.9.9")))
+check("policy: wildcard doesn't match the bare domain", not pol.allows("home.example", ip("10.9.9.9")))
+check("policy: listed network allowed for any host", pol.allows("nas", ip("192.168.1.40")))
+check("policy: single IP allowed", pol.allows("10.0.0.7", ip("10.0.0.7")))
+check("policy: other private address refused", not pol.allows("router", ip("192.168.2.1")))
+check("policy: unlisted host refused", not pol.allows("other.lan", ip("10.9.9.9")))
+check("empty policy refuses private", not lp.Policy.from_text("").allows("x", ip("10.0.0.1")))
+check("policy entries listed back", lp.Policy.from_text(" a.lan ,b.lan\n\n").entries == ("a.lan", "b.lan"))
+for bad in ["http://gitea.lan", "gitea.lan/path", "300.1.1.1/8", "*.", "a..b", "*.*.lan", "under_score.lan x"]:
+    try:
+        lp.Policy.from_text(bad)
+        check(f"policy rejects {bad!r}", False)
+    except ValueError as err:
+        check(f"policy rejects {bad!r}", str(err) in bad)
+
+
 # ------------------------------------------------------------------------- fetch
-LOOPBACK = ipaddress.ip_address("127.0.0.1")
-only_loopback = lambda ip: ip == LOOPBACK  # noqa: E731
+LOOPBACK_ONLY = lp.Policy.from_text("127.0.0.1")
 
 HITS = {"og": 0}
 
@@ -133,8 +155,23 @@ async def latin1(request):
     return web.Response(body=body, headers={"Content-Type": "text/html; charset=iso-8859-1"})
 
 
+PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 64
+
+
 async def image(request):
-    return web.Response(body=b"\x89PNG....", content_type="image/png")
+    return web.Response(body=PNG, content_type="image/png")
+
+
+async def huge_image(request):
+    return web.Response(body=b"\0" * (6 * 1024 * 1024), content_type="image/jpeg")
+
+
+async def svg(request):
+    return web.Response(text="<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>", content_type="image/svg+xml")
+
+
+async def video(request):
+    return web.Response(body=b"\0\0\0\x18ftypmp42", content_type="video/mp4")
 
 
 async def pdf(request):
@@ -157,7 +194,8 @@ async def main():
     app = web.Application()
     app.add_routes([
         web.get("/og", og), web.get("/big", big), web.get("/latin1", latin1),
-        web.get("/image.png", image), web.get("/doc.pdf", pdf), web.get("/missing", missing),
+        web.get("/image.png", image), web.get("/huge.jpg", huge_image), web.get("/x.svg", svg),
+        web.get("/clip.mp4", video), web.get("/doc.pdf", pdf), web.get("/missing", missing),
         web.get("/redirect", redirect), web.get("/loop", loop_redirect),
     ])
     runner = web.AppRunner(app)
@@ -172,12 +210,12 @@ async def main():
     try:
         cache = {}
 
-        async def fetch(url, allow=only_loopback):
-            return await lp.async_fetch_preview(url, allow=allow, cache=cache)
+        async def fetch(url, policy=LOOPBACK_ONLY):
+            return await lp.async_fetch_preview(url, policy=policy, cache=cache)
 
-        async def refused(url, allow=only_loopback):
+        async def refused(url, policy=LOOPBACK_ONLY):
             try:
-                await fetch(url, allow)
+                await fetch(url, policy)
             except lp.LinkPreviewError:
                 return True
             return False
@@ -200,6 +238,9 @@ async def main():
         p = await fetch(f"{base}/image.png")
         check("image link previews as an image", p["kind"] == "image" and p["image"] == f"{base}/image.png", p)
 
+        p = await fetch(f"{base}/clip.mp4")
+        check("video link previews as a video", p["kind"] == "video" and p["video"] == f"{base}/clip.mp4" and p["image"] is None, p)
+
         check("non-html refused", await refused(f"{base}/doc.pdf"))
         check("http error refused", await refused(f"{base}/missing"))
         check("redirect loop refused", await refused(f"{base}/loop"))
@@ -208,17 +249,43 @@ async def main():
         check("ftp refused", await refused("ftp://example.com/"))
 
         # The real guard (no loopback exemption):
-        check("literal private IP refused", await refused(f"{base}/og?guard=1", allow=lp.is_public_address))
+        check("literal private IP refused", await refused(f"{base}/og?guard=1", policy=lp.Policy()))
         check("hostname resolving to private IP refused",
-              await refused(f"http://localhost:{port}/og", allow=lp.is_public_address))
+              await refused(f"http://localhost:{port}/og", policy=lp.Policy()))
         check("redirect to a private IP refused",
               await refused(f"{base}/redirect?to={base2}/og"))  # 127.0.0.2 is served, but not allowed
         # Start on 127.0.0.2 (allowed) and get redirected to a hostname (localhost) whose
         # addresses (127.0.0.1, ::1) aren't: the resolver must refuse it.
-        only_second = lambda ip: ip == ipaddress.ip_address("127.0.0.2")  # noqa: E731
-        check("second address reachable", (await fetch(f"{base2}/og", allow=only_second))["title"] == "Served")
+        only_second = lp.Policy.from_text("127.0.0.2")
+        check("second address reachable", (await fetch(f"{base2}/og", only_second))["title"] == "Served")
         check("redirect to a private hostname refused",
-              await refused(f"{base2}/redirect?to=http://localhost:{port}/og", allow=only_second))
+              await refused(f"{base2}/redirect?to=http://localhost:{port}/og", only_second))
+        # ...unless the allow-list names that host.
+        p = await fetch(f"http://localhost:{port}/og?host=1", lp.Policy.from_text("localhost"))
+        check("allow-listed hostname may resolve to a private address", p["title"] == "Served", p)
+        p = await fetch(f"{base}/og?net=1", lp.Policy.from_text("127.0.0.0/8"))
+        check("allow-listed network is fetched", p["title"] == "Served", p)
+
+        # Images for the proxy
+        async def img(url, policy=LOOPBACK_ONLY):
+            return await lp.async_fetch_image(url, policy=policy)
+
+        async def img_refused(url, policy=LOOPBACK_ONLY):
+            try:
+                await img(url, policy)
+            except lp.LinkPreviewError:
+                return True
+            return False
+
+        body, ctype = await img(f"{base}/image.png")
+        check("image fetched with its type", body == PNG and ctype == "image/png", ctype)
+        body, ctype = await img(f"{base}/redirect?to=/image.png")
+        check("image fetch follows redirects", body == PNG, ctype)
+        check("svg refused (scriptable)", await img_refused(f"{base}/x.svg"))
+        check("non-image refused", await img_refused(f"{base}/og"))
+        check("oversized image refused", await img_refused(f"{base}/huge.jpg"))
+        check("image on a private address refused", await img_refused(f"{base}/image.png", lp.Policy()))
+        check("image redirect to a private address refused", await img_refused(f"{base}/redirect?to={base2}/image.png"))
     finally:
         await runner.cleanup()
 

@@ -64,8 +64,16 @@ v1 ships the **Core + multi-line paste** scope:
   preview underneath, like Slack or Discord: the site, the page's title and description, and
   its picture. A link straight to an image shows the image. Up to three previews per
   description or comment; write an address in angle brackets (`<https://…>`) to link it
-  without a preview. Home Assistant fetches the page, so it only previews **public** sites:
-  addresses on your own network (and anything behind a login, like Jira) just stay plain links.
+  without a preview. **YouTube, Vimeo and video-file links** get a ▶ button that plays the
+  video in a player over the card (YouTube in its no-cookie mode). On the **board**, a card
+  whose description has a link shows it under the title (icon + page title; click opens the
+  page), and a pasted image link becomes the card's cover.
+  Home Assistant fetches the pages *and* the preview pictures, so the sites never see your
+  viewers' browsers (video players and video files are the exception: they play from the
+  site). It only fetches **public** sites unless you allow more: Settings → Devices &
+  services → Hakanban → **Configure** takes a list of hosts on your own network to preview
+  (`gitea.lan`, `*.home.example`, `192.168.1.0/24`). Pages behind a login (like Jira) still
+  can't be previewed.
 - **Dependencies** — mark a card as **blocked by** other cards on the same board from the
   card view's *Dependencies* section (or the new card dialog). Blocked cards get a red edge
   and a ⛔ badge listing what they're waiting on; cards holding others up get a ⛓ badge with
@@ -328,7 +336,8 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 
 - [x] Checklists — add, rename, delete, edit, tick and reorder from the card view
 - [ ] Attachments
-- [x] Link previews — rich previews of web links in descriptions and comments
+- [x] Link previews — rich previews of web links in descriptions, comments and on cards,
+  with video playback
 - [ ] Card / board templates
 - [x] Swimlanes — group the board by type, epic, label, status or assignee
 - [x] Assignees — assign cards to Home Assistant people

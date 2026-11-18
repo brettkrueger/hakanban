@@ -44,6 +44,19 @@ export function openDialog(title, bodyHtml, { width = 460, beforeClose = null } 
   return { root, close };
 }
 
+// Play a link preview's video: `kind` "embed" is a player page (YouTube / Vimeo) shown in
+// an iframe, "file" a video file. It lives outside the card view, so live pushes that
+// re-render the card don't restart it.
+export function openVideoPlayer(src, kind, title) {
+  const media = kind === "embed"
+    ? `<iframe src="${escapeHtml(src)}" title="${escapeHtml(title)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`
+    : `<video src="${escapeHtml(src)}" controls autoplay playsinline></video>`;
+  const { root, close } = openDialog(title, `<div class="hk-video">${media}</div>
+    <div class="hk-row" style="justify-content:flex-end;margin-top:10px"><button class="hk-btn" id="hk-video-close">Close</button></div>`, { width: 960 });
+  root.querySelector("#hk-video-close").addEventListener("click", close);
+  return { root, close };
+}
+
 // A custom colour control: the browser's native colour picker (spectrum / wheel, plus an
 // eyedropper in Chromium) next to a hex field. `prefix` namespaces the element ids.
 // With `apply: true` an Apply button commits the hex field; picking in the native picker

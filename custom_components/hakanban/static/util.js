@@ -112,33 +112,91 @@ export function loadPreview(api, url) {
   return entry.promise;
 }
 
+// Image sources a preview may use: HA's preview image endpoint (the usual case), or a
+// plain http(s) URL.
+const PREVIEW_IMAGE_PATH = "/api/hakanban/preview_image?";
+function previewSrc(src) {
+  return src && (src.startsWith(PREVIEW_IMAGE_PATH) || /^https?:\/\//i.test(src)) ? src : null;
+}
+
+// The privacy-friendly player URL for a YouTube or Vimeo link, or null.
+export function videoEmbedUrl(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch (_) {
+    return null;
+  }
+  const host = u.hostname.replace(/^(www|m|music)\./, "");
+  let id = null;
+  if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0];
+  else if (host === "youtube.com" || host === "youtube-nocookie.com") {
+    id = u.pathname === "/watch" ? u.searchParams.get("v") : (u.pathname.match(/^\/(?:shorts|live|embed)\/([^/]+)/) || [])[1];
+  }
+  if (id && /^[\w-]{6,20}$/.test(id)) {
+    const t = (u.searchParams.get("t") || u.searchParams.get("start") || "").match(/^(\d+)s?$/);
+    return `https://www.youtube-nocookie.com/embed/${id}?autoplay=1${t ? `&start=${t[1]}` : ""}`;
+  }
+  const vimeo = host === "vimeo.com" && u.pathname.match(/^\/(\d+)(?:\/|$)/);
+  if (vimeo) return `https://player.vimeo.com/video/${vimeo[1]}?autoplay=1`;
+  return null;
+}
+
+const blank = (url) => `href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"`;
+
 // The preview block for `url`: the card if it's loaded, nothing if there's none, and a
-// placeholder (filled by hydratePreviews) while it loads.
+// placeholder (filled by hydratePreviews) while it loads. Videos (YouTube, Vimeo, video
+// files) get a ▶ button carrying data-play / data-play-kind / data-play-title, which the
+// card view opens in a player.
 export function previewHtml(url) {
   const entry = previews.get(url);
   if (entry?.state === "none") return "";
   if (entry?.state !== "ok") return `<div class="hk-embed loading" data-embed-url="${escapeHtml(url)}"></div>`;
   const p = entry.data;
-  const href = escapeHtml(url);
-  const img = (cls) =>
-    p.image && /^https?:\/\//i.test(p.image)
-      ? `<img class="${cls}" src="${escapeHtml(p.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-      : "";
+  const image = previewSrc(p.image);
+  const img = (cls) => (image ? `<img class="${cls}" src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "");
+  const embed = videoEmbedUrl(url);
+  const play = embed
+    ? { src: embed, kind: "embed" }
+    : p.kind === "video" && /^https?:\/\//i.test(p.video || "") ? { src: p.video, kind: "file" } : null;
+  const playTitle = p.title || p.site_name || "Video";
+  const playBtn = play
+    ? `<button class="hk-embed-play" data-play="${escapeHtml(play.src)}" data-play-kind="${play.kind}" data-play-title="${escapeHtml(playTitle)}" title="Play" aria-label="Play ${escapeHtml(playTitle)}">${img("hk-embed-img")}<span class="hk-play-icon">▶</span></button>`
+    : "";
   if (p.kind === "image") {
-    return `<a class="hk-embed-image" href="${href}" target="_blank" rel="noopener noreferrer">${img("hk-embed-img")}</a>`;
+    return `<a class="hk-embed-image" ${blank(url)}>${img("hk-embed-img")}</a>`;
+  }
+  if (p.kind === "video") {
+    return `<div class="hk-embed large"><div class="hk-embed-body"><a class="hk-embed-title" ${blank(url)}>${escapeHtml(p.site_name || url)}</a></div>${playBtn}</div>`;
   }
   const color = /^#[0-9a-f]{3,8}$/i.test(p.color || "") ? ` style="border-left-color:${p.color}"` : "";
-  const icon = p.icon && /^https?:\/\//i.test(p.icon)
-    ? `<img class="hk-embed-icon" src="${escapeHtml(p.icon)}" alt="" loading="lazy" referrerpolicy="no-referrer">`
-    : "";
-  return `<div class="hk-embed${p.large ? " large" : ""}"${color}>
+  const iconSrc = previewSrc(p.icon);
+  const icon = iconSrc ? `<img class="hk-embed-icon" src="${escapeHtml(iconSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "";
+  return `<div class="hk-embed${p.large || play ? " large" : ""}"${color}>
     <div class="hk-embed-body">
       <div class="hk-embed-site">${icon}${escapeHtml(p.site_name || "")}</div>
-      ${p.title ? `<a class="hk-embed-title" href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(p.title)}</a>` : ""}
+      ${p.title ? `<a class="hk-embed-title" ${blank(url)}>${escapeHtml(p.title)}</a>` : ""}
       ${p.description ? `<div class="hk-embed-desc">${escapeHtml(p.description)}</div>` : ""}
     </div>
-    ${img("hk-embed-img")}
+    ${playBtn || img("hk-embed-img")}
   </div>`;
+}
+
+// The compact version for a board card: a pasted image becomes the card's cover, anything
+// else a one-line link with the site's icon and the page's title.
+export function previewChipHtml(url) {
+  const entry = previews.get(url);
+  if (entry?.state === "none") return "";
+  if (entry?.state !== "ok") return `<span class="hk-card-preview loading" data-embed-url="${escapeHtml(url)}"></span>`;
+  const p = entry.data;
+  const image = previewSrc(p.image);
+  if (p.kind === "image") {
+    return image ? `<img class="hk-card-cover hk-embed-img" src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "";
+  }
+  const iconSrc = previewSrc(p.icon);
+  const icon = iconSrc ? `<img class="hk-embed-icon" src="${escapeHtml(iconSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "🔗";
+  const label = p.title || p.site_name || url;
+  return `<a class="hk-card-preview" ${blank(url)} draggable="false" title="${escapeHtml(label)}">${icon}<span>${escapeHtml(label)}</span></a>`;
 }
 
 // Previews for every address in a rendered block of text.
@@ -148,16 +206,18 @@ export function previewsHtml(html) {
 }
 
 // Fetch the previews behind any placeholders under `root` and swap them in as they
-// arrive. Images that fail to load are removed rather than shown broken.
-export function hydratePreviews(root, api) {
+// arrive, drawn by `draw` (previewHtml or previewChipHtml). Images that fail to load are
+// removed rather than shown broken.
+export function hydratePreviews(root, api, draw = previewHtml) {
   hideBrokenImages(root);
-  for (const el of root.querySelectorAll(".hk-embed.loading[data-embed-url]")) {
+  if (!api) return;
+  for (const el of root.querySelectorAll(".loading[data-embed-url]")) {
     const url = el.dataset.embedUrl;
     loadPreview(api, url).then(() => {
-      for (const ph of root.querySelectorAll(".hk-embed.loading[data-embed-url]")) {
+      for (const ph of root.querySelectorAll(".loading[data-embed-url]")) {
         if (ph.dataset.embedUrl !== url) continue;
         const tpl = document.createElement("template");
-        tpl.innerHTML = previewHtml(url);
+        tpl.innerHTML = draw(url);
         hideBrokenImages(tpl.content);
         ph.replaceWith(tpl.content);
       }

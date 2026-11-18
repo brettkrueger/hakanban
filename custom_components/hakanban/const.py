@@ -22,6 +22,13 @@ CARD_JS_FILENAME: Final = "hakanban-card.js"
 # hass.data keys
 DATA_MANAGER: Final = "manager"
 DATA_UNSUB: Final = "unsub"
+DATA_PREVIEW_POLICY: Final = "preview_policy"
+
+# Options: hosts on your own network that link previews may fetch (see link_preview.Policy).
+CONF_PREVIEW_HOSTS: Final = "preview_hosts"
+# HA serves link-preview images from here (signed URLs), so viewers' browsers don't contact
+# the linked sites.
+PREVIEW_IMAGE_URL: Final = f"/api/{DOMAIN}/preview_image"
 
 # Default label palette (Trello-ish). id -> (name, colour)
 DEFAULT_LABELS: Final = [

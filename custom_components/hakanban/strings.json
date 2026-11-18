@@ -10,6 +10,21 @@
       "single_instance_allowed": "Hakanban is already set up."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Link previews",
+        "description": "Hakanban previews web links on cards by having Home Assistant fetch the page. It only fetches public sites, so it can't be used to probe your network. List the hosts on your own network it may fetch too.",
+        "data": { "preview_hosts": "Hosts on your network to preview" },
+        "data_description": {
+          "preview_hosts": "One per line (or comma-separated): a hostname (gitea.lan), a wildcard for its subdomains (*.home.example), an IP address or a network (192.168.1.0/24). Leave empty to preview public sites only."
+        }
+      }
+    },
+    "error": {
+      "invalid_host": "Not a hostname, IP address or network: {entry}"
+    }
+  },
   "services": {
     "add_card": { "name": "Add card", "description": "Add a card to a Hakanban column." },
     "move_card": { "name": "Move card", "description": "Move a card to another column." },

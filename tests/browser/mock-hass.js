@@ -307,11 +307,14 @@ const handlers = {
 };
 
 // Canned link previews (the real backend fetches the page). Anything else has none.
-const ICON = "http://localhost:8765/custom_components/hakanban/brand/icon.png";
+// Served from "localhost" while the page is on 127.0.0.1, so these load cross-origin like real ones.
+const ICON = location.origin.replace("127.0.0.1", "localhost") + "/custom_components/hakanban/brand/icon.png";
 const PREVIEWS = {
   "https://example.com/article": {
     kind: "page", title: "An example article", description: "What the article is about, in a sentence or two.",
-    image: ICON, site_name: "Example News", icon: ICON, color: "#ff8800", large: false,
+    // The real backend points images at HA's preview image endpoint; smoke.mjs serves it.
+    image: ICON, site_name: "Example News", icon: "/api/hakanban/preview_image?url=" + encodeURIComponent("https://example.com/favicon.ico"),
+    color: "#ff8800", large: false,
   },
   "https://video.example.com/watch?v=1&t=2": {
     kind: "page", title: "A video", description: "Watch this.", image: ICON,
@@ -320,8 +323,16 @@ const PREVIEWS = {
   "https://img.example.com/cat.png": {
     kind: "image", title: null, description: null, image: ICON, site_name: "img.example.com", icon: null, color: null, large: true,
   },
+  "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s": {
+    kind: "page", title: "A YouTube video", description: "Press play.", image: ICON,
+    site_name: "YouTube", icon: ICON, color: null, large: true,
+  },
+  "https://cdn.example.com/clip.mp4": {
+    kind: "video", title: null, description: null, image: null, video: "https://cdn.example.com/clip.mp4",
+    site_name: "cdn.example.com", icon: null, color: null, large: true,
+  },
   "https://broken.example.com/": {
-    kind: "page", title: "Broken image", description: null, image: "http://localhost:8765/missing.png",
+    kind: "page", title: "Broken image", description: null, image: location.origin.replace("127.0.0.1", "localhost") + "/missing.png",
     site_name: "broken.example.com", icon: null, color: null, large: false,
   },
 };
