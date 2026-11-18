@@ -156,6 +156,8 @@ a.hk-card-number:hover { color: var(--primary-color, #4f9dff); text-decoration: 
 .hk-embeds { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .hk-embed { display: flex; gap: 12px; max-width: 520px; box-sizing: border-box; padding: 8px 12px; border-radius: 6px; background: var(--hk-col-bg); border-left: 4px solid var(--hk-divider); font-size: .82rem; }
 .hk-embed.loading { display: none; }
+.hk-desc-render .hk-embeds { margin: 4px 0; }
+.hk-desc-render .hk-embed { background: var(--hk-divider); }
 .hk-embed-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .hk-embed-site { display: flex; align-items: center; gap: 6px; color: var(--hk-subtle); font-size: .72rem; }
 .hk-embed-icon { width: 16px; height: 16px; border-radius: 3px; object-fit: contain; }
@@ -172,11 +174,6 @@ a.hk-card-number:hover { color: var(--primary-color, #4f9dff); text-decoration: 
 .hk-embed-play:hover .hk-play-icon, .hk-embed-play:focus-visible .hk-play-icon { background: #e62117; }
 .hk-video { aspect-ratio: 16 / 9; background: #000; border-radius: 6px; overflow: hidden; }
 .hk-video iframe, .hk-video video { width: 100%; height: 100%; border: 0; display: block; }
-.hk-card-preview { display: flex; align-items: center; gap: 6px; margin: 4px 0 2px; font-size: .75rem; color: var(--hk-subtle); text-decoration: none; min-width: 0; }
-.hk-card-preview span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hk-card-preview:hover span { text-decoration: underline; color: var(--primary-color, #4f9dff); }
-.hk-card-preview.loading { display: none; }
-.hk-card-cover { display: block; width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; margin: 4px 0; }
 .hk-embed-image { display: inline-block; max-width: 520px; }
 .hk-embed-image .hk-embed-img { display: block; max-width: 100%; max-height: 300px; border-radius: 6px; }
 .hk-modal-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }

@@ -203,9 +203,10 @@ entities are left as text.
 
 ### Link previews
 
-The frontend links bare `http(s)://` addresses in descriptions, comments and checklist items,
-and shows a preview under descriptions and comments for up to 3 distinct addresses each
-(not ones written `<https://…>`, and not this HA instance's own URLs). Nothing is stored on
+The frontend links bare `http(s)://` addresses in descriptions, comments and checklist items.
+In the open card (never on the board), descriptions and comments show a preview for up to 3
+distinct addresses each, placed right under the line holding the link (not for ones written
+`<https://…>`, nor this HA instance's own URLs). Nothing is stored on
 the card: `hakanban/link_preview` fetches the page on demand and returns
 
 ```jsonc
@@ -243,8 +244,6 @@ Frontend: YouTube (`watch`, `youtu.be`, `shorts`, `live`) and Vimeo links, and `
 "video"` previews, get a ▶ button that opens a player dialog (outside the card view, so live
 pushes don't restart it): `youtube-nocookie.com/embed/<id>?autoplay=1[&start=<t>]`,
 `player.vimeo.com/video/<id>`, or a `<video>` for files, which load from the site directly.
-On the board, a card shows the first previewable link in its description as a one-line
-link (an image link as the card's cover).
 
 ### Panel URLs
 

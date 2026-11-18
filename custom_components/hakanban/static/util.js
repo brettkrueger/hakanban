@@ -182,33 +182,33 @@ export function previewHtml(url) {
   </div>`;
 }
 
-// The compact version for a board card: a pasted image becomes the card's cover, anything
-// else a one-line link with the site's icon and the page's title.
-export function previewChipHtml(url) {
-  const entry = previews.get(url);
-  if (entry?.state === "none") return "";
-  if (entry?.state !== "ok") return `<span class="hk-card-preview loading" data-embed-url="${escapeHtml(url)}"></span>`;
-  const p = entry.data;
-  const image = previewSrc(p.image);
-  if (p.kind === "image") {
-    return image ? `<img class="hk-card-cover hk-embed-img" src="${escapeHtml(image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "";
-  }
-  const iconSrc = previewSrc(p.icon);
-  const icon = iconSrc ? `<img class="hk-embed-icon" src="${escapeHtml(iconSrc)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : "🔗";
-  const label = p.title || p.site_name || url;
-  return `<a class="hk-card-preview" ${blank(url)} draggable="false" title="${escapeHtml(label)}">${icon}<span>${escapeHtml(label)}</span></a>`;
-}
-
-// Previews for every address in a rendered block of text.
-export function previewsHtml(html) {
-  const urls = previewUrls(html);
-  return urls.length ? `<div class="hk-embeds">${urls.map(previewHtml).join("")}</div>` : "";
+// Rendered text with each link's preview placed right under the line holding the link
+// (lines end at <br> or a list item's end). The <br> after a preview goes, since the
+// preview already starts a new line.
+export function withPreviews(html) {
+  const wanted = previewUrls(html);
+  if (!wanted.length) return html;
+  const parts = String(html).split(/(<br>|<\/li>)/);
+  let skipBr = false;
+  return parts
+    .map((part, i) => {
+      if (i % 2) {
+        const sep = skipBr && part === "<br>" ? "" : part;
+        skipBr = false;
+        return sep;
+      }
+      const here = previewUrls(part, Infinity).filter((u) => wanted.includes(u));
+      here.forEach((u) => wanted.splice(wanted.indexOf(u), 1));
+      if (!here.length) return part;
+      skipBr = true;
+      return `${part}<div class="hk-embeds">${here.map(previewHtml).join("")}</div>`;
+    })
+    .join("");
 }
 
 // Fetch the previews behind any placeholders under `root` and swap them in as they
-// arrive, drawn by `draw` (previewHtml or previewChipHtml). Images that fail to load are
-// removed rather than shown broken.
-export function hydratePreviews(root, api, draw = previewHtml) {
+// arrive. Images that fail to load are removed rather than shown broken.
+export function hydratePreviews(root, api) {
   hideBrokenImages(root);
   if (!api) return;
   for (const el of root.querySelectorAll(".loading[data-embed-url]")) {
@@ -217,7 +217,7 @@ export function hydratePreviews(root, api, draw = previewHtml) {
       for (const ph of root.querySelectorAll(".loading[data-embed-url]")) {
         if (ph.dataset.embedUrl !== url) continue;
         const tpl = document.createElement("template");
-        tpl.innerHTML = draw(url);
+        tpl.innerHTML = previewHtml(url);
         hideBrokenImages(tpl.content);
         ph.replaceWith(tpl.content);
       }

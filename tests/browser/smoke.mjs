@@ -236,6 +236,8 @@ try {
   await comment("broken https://broken.example.com/");
   await wait(250);
   check("comment URL is a link (with &)", await ev(`!!M().querySelector('.hk-comment a[href="https://video.example.com/watch?v=1&t=2"]')`));
+  check("comment preview sits inside the comment's text block, after the link",
+    await ev(`(() => { const c = [...M().querySelectorAll(".hk-comment")].find(c => c.textContent.includes("watch")); const t = c.querySelector(".hk-comment-text"); return !!t && t.innerHTML.indexOf("hk-embeds") > t.innerHTML.indexOf("video.example.com/watch"); })()`));
   check("comment shows a large preview", await ev(`(() => { const c = [...M().querySelectorAll(".hk-comment")].find(c => c.textContent.includes("watch")); const e = c.querySelector(".hk-embed.large"); return !!e && e.querySelector(".hk-embed-title").textContent === "A video"; })()`));
   check("image link shows the image", await ev(`(() => { const c = [...M().querySelectorAll(".hk-comment")].find(c => c.textContent.includes("look")); const a = c.querySelector("a.hk-embed-image"); return !!a && a.getAttribute("href") === "https://img.example.com/cat.png" && !!a.querySelector("img"); })()`));
   check("broken preview image is removed, preview kept", await ev(`(() => { const c = [...M().querySelectorAll(".hk-comment")].find(c => c.textContent.includes("broken")); const e = c.querySelector(".hk-embed"); return !!e && !e.querySelector("img"); })()`));
@@ -263,20 +265,33 @@ try {
   check("board card title URL stays plain text", await ev(`!cardEl("Write https://example.com/article").querySelector(".hk-card-title a")`));
   await shot("lp-2-board");
 
-  // ---- link chips on board cards
-  const chip = `cardEl("Write https://example.com/article").querySelector("a.hk-card-preview")`;
-  check("board card shows its description's link",
-    await ev(`(() => { const a = ${chip}; return !!a && a.getAttribute("href") === "https://example.com/article" && a.textContent.trim() === "An example article" && a.target === "_blank"; })()`));
-  check("proxied icon is used", await ev(`${chip}.querySelector("img").getAttribute("src").startsWith("/api/hakanban/preview_image?url=")`));
+  // ---- the board shows no previews (only the open card does)
+  const previewCallsBeforeBoard = (await ev(`__previewCalls`)).length;
   await wait(200);
-  check("proxied icon loads", await ev(`${chip}.querySelector("img")?.naturalWidth > 0`));
-  await realClick(chip);
-  check("clicking the link doesn't open the card", await ev(`!M()`));
-  check("card without links has no chip", await ev(`!cardEl("Walk the dog").querySelector(".hk-card-preview, .hk-card-cover")`));
+  check("board card shows no link preview", await ev(`!cardEl("Write https://example.com/article").querySelector(".hk-embed, .hk-embeds, img")`));
   await ev(`(async () => { await __panel._api.updateCard(${C("Buy milk")}.id, { description: "like https://img.example.com/cat.png" }); await tick(); })()`);
   await wait(200);
-  check("image link becomes the card's cover", await ev(`!!cardEl("Buy milk").querySelector("img.hk-card-cover")`));
-  await shot("lp-3-board-chips");
+  check("board card with an image link shows no image", await ev(`!cardEl("Buy milk").querySelector("img")`));
+  check("board never asks for previews", (await ev(`__previewCalls`)).length === previewCallsBeforeBoard);
+  await shot("lp-3-board");
+
+  // ---- previews sit right under the line with their link
+  await ev(`cardEl("Buy milk").querySelector(".hk-card-title").click(); tick()`);
+  await ev(`(async () => { M().querySelector("#hk-desc-render").click(); await tick(); })()`);
+  await ev(`(async () => {
+    M().querySelector("#hk-desc").value = "Intro line\\nRead https://example.com/article now\\nAfter line\\n- item https://video.example.com/watch?v=1&t=2\\nLast line";
+    M().querySelector("#hk-desc-save").click(); await tick();
+  })()`);
+  await wait(200);
+  const descOrder = await ev(`(() => { const h = M().querySelector("#hk-desc-render").innerHTML;
+    return [h.indexOf("Intro line"), h.indexOf("example.com/article"), h.indexOf("An example article"), h.indexOf("After line"), h.indexOf("video.example.com"), h.indexOf("A video"), h.indexOf("Last line")]; })()`);
+  check("each preview sits right under its link's line, inside the description", descOrder.every((v, k) => v >= 0 && (k === 0 || v > descOrder[k - 1])), JSON.stringify(descOrder));
+  check("no previews left at the bottom of the description", await ev(`!M().querySelector("#hk-desc-render + .hk-embeds")`));
+  check("no blank line after a preview", await ev(`![...M().querySelectorAll("#hk-desc-render .hk-embeds")].some(e => e.nextSibling?.nodeName === "BR")`));
+  await realClick(`M().querySelector("#hk-desc-render .hk-embed-desc")`);
+  check("clicking a preview doesn't open the description editor", await ev(`!M().querySelector("#hk-desc")`));
+  await shot("lp-3b-inline");
+  await ev(`M().querySelector("#hk-close").click(); tick()`);
 
   // ---- videos
   check("video embed URLs", JSON.stringify(await ev(`import("/custom_components/hakanban/static/util.js").then(u => [

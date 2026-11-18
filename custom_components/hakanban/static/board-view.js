@@ -17,10 +17,6 @@ import {
   swimlanes,
   swimlaneChanges,
   renderRefs,
-  renderMarkdown,
-  previewUrls,
-  previewChipHtml,
-  hydratePreviews,
   cardPath,
   peopleList,
   peopleKey,
@@ -170,17 +166,9 @@ export class HakanbanBoard extends HTMLElement {
         ${epicTop}
         ${labels ? `<div class="hk-card-labels">${labels}</div>` : ""}
         <div class="hk-card-title">${renderRefs(card.title, this._board)}</div>
-        ${this._linkPreviewHtml(card)}
         <div class="hk-card-badges">${badges.join("")}</div>
         ${epicBottom}
       </div>`;
-  }
-
-  // The first web link in the card's description, as a cover image or a one-line link.
-  _linkPreviewHtml(card) {
-    if (!card.description || !card.description.includes("http")) return "";
-    const [url] = previewUrls(renderMarkdown(card.description), 1);
-    return url ? previewChipHtml(url) : "";
   }
 
   _columnHtml(col, labelById, cardById) {
@@ -282,7 +270,6 @@ export class HakanbanBoard extends HTMLElement {
       <div class="hk-board ${lanes ? "lanes" : ""}" data-board ${bg}>${inner}</div>`;
 
     this._wire();
-    hydratePreviews(this.shadowRoot, this._api, previewChipHtml);
     this._restoreComposer();
   }
 
@@ -313,8 +300,6 @@ export class HakanbanBoard extends HTMLElement {
     root.querySelectorAll(".hk-card").forEach((el) => {
       el.addEventListener("click", (e) => {
         if (this._justDragged) return;
-        // A link preview opens its page (in a new tab), not the card.
-        if (e.target.closest("a.hk-card-preview")) return;
         // The #number is a real link: let Ctrl/⌘/Shift/middle-click open it in a new tab.
         if (e.target.closest("a.hk-card-number")) {
           if (e.ctrlKey || e.metaKey || e.shiftKey || e.button !== 0) return;

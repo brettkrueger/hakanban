@@ -14,7 +14,7 @@ import {
   epicChildren,
   epicProgress,
   renderText,
-  previewsHtml,
+  withPreviews,
   hydratePreviews,
   cardIndex,
   openBlockers,
@@ -184,10 +184,10 @@ export class HakanbanCardDetail extends HTMLElement {
       .reverse()
       .map((cm) => {
         const text = renderText(cm.text, b);
-        return `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div>${text}</div>${previewsHtml(text)}</div>`;
+        return `<div class="hk-comment"><span class="who">${escapeHtml(cm.author)}</span><span class="when">${formatDue(cm.ts)}</span><div class="hk-comment-text">${withPreviews(text)}</div></div>`;
       })
       .join("");
-    const descHtml = renderMarkdown(c.description, b);
+    const descHtml = withPreviews(renderMarkdown(c.description, b));
 
     const columnsOptions = (b.columns || [])
       .map((col) => `<option value="${col.id}" ${col.id === c.column_id ? "selected" : ""}>${escapeHtml(col.title)}</option>`)
@@ -303,8 +303,7 @@ export class HakanbanCardDetail extends HTMLElement {
               this._editingDesc
                 ? `<textarea class="hk-desc-edit" id="hk-desc" data-keep="desc">${escapeHtml(c.description || "")}</textarea>
                    <div class="hk-row" style="margin-top:6px"><button class="hk-btn" id="hk-desc-save">Save</button><button class="hk-btn secondary" id="hk-desc-cancel">Cancel</button></div>`
-                : `<div class="hk-desc-render" id="hk-desc-render">${descHtml || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>
-                   ${previewsHtml(descHtml)}`
+                : `<div class="hk-desc-render" id="hk-desc-render">${descHtml || '<span style="color:var(--hk-subtle)">Add a more detailed description…</span>'}</div>`
             }
           </div>
 
@@ -568,7 +567,7 @@ export class HakanbanCardDetail extends HTMLElement {
       });
     } else {
       $("#hk-desc-render").addEventListener("click", (e) => {
-        if (e.target.closest("a[href]")) return;
+        if (e.target.closest("a[href], .hk-embeds")) return;
         this._editingDesc = true;
         this.render();
       });

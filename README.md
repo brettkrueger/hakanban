@@ -61,13 +61,12 @@ v1 ships the **Core + multi-line paste** scope:
   automation can notify them.
 - **Link previews** — web addresses in a card's description, comments and checklist items
   become links (no markdown needed), and those in the description and comments get a
-  preview underneath, like Slack or Discord: the site, the page's title and description, and
-  its picture. A link straight to an image shows the image. Up to three previews per
+  preview right under the line with the link, like Slack or Discord: the site, the page's
+  title and description, and its picture. Previews only show in the open card, not on the
+  board. A link straight to an image shows the image. Up to three previews per
   description or comment; write an address in angle brackets (`<https://…>`) to link it
   without a preview. **YouTube, Vimeo and video-file links** get a ▶ button that plays the
-  video in a player over the card (YouTube in its no-cookie mode). On the **board**, a card
-  whose description has a link shows it under the title (icon + page title; click opens the
-  page), and a pasted image link becomes the card's cover.
+  video in a player over the card (YouTube in its no-cookie mode).
   Home Assistant fetches the pages *and* the preview pictures, so the sites never see your
   viewers' browsers (video players and video files are the exception: they play from the
   site). It only fetches **public** sites unless you allow more: Settings → Devices &
@@ -336,8 +335,8 @@ documented in **[docs/PROTOCOL.md](docs/PROTOCOL.md)**.
 
 - [x] Checklists — add, rename, delete, edit, tick and reorder from the card view
 - [ ] Attachments
-- [x] Link previews — rich previews of web links in descriptions, comments and on cards,
-  with video playback
+- [x] Link previews — rich previews of web links in descriptions and comments, with video
+  playback
 - [ ] Card / board templates
 - [x] Swimlanes — group the board by type, epic, label, status or assignee
 - [x] Assignees — assign cards to Home Assistant people
